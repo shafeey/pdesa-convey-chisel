@@ -27,6 +27,10 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
     levels(i-1).io.bot <> levels(i).io.top
   }
 
+  levels.last.io.bot.l_occupied := false.B
+  levels.last.io.bot.r_occupied := false.B
+  levels.last.io.bot.capacity := 0.U
+
   val count = RegInit(0.U(num_stages.W))
   switch(io.op){
     is(sENQUEUE){
@@ -204,6 +208,9 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
                 nxt_val_tmp(s) := io.top.data
                 trans_op := sNOP
               }
+            }.otherwise{
+              nxt_val_tmp(s) := io.top.data
+              trans_op := sNOP
             }
 
             mem(s).write(pos, nxt_val_tmp(s))
