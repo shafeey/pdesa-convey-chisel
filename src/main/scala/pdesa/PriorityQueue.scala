@@ -11,6 +11,7 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
   val last_op = RegInit(init = sNOP)
   val ready_for_op = last_op === sNOP
   last_op := Mux(ready_for_op, io.op, sNOP)
+  io.ready := ready_for_op
 
   val levels = for(i<- 1 until num_stages) yield{
     Module(new PriorityQueueHeapLevel(stage_id = i))
@@ -48,6 +49,7 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
     val out = Output(new PriorityQueueBundle)
     val count = Output(UInt(num_stages.W))
     val op = Input(UInt(2.W))
+    val ready = Output(Bool())
   }
 
   class PriorityQueueBundle  extends Bundle{
