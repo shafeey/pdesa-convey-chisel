@@ -11,6 +11,7 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
   val last_op = RegInit(init = sNOP)
   val ready_for_op = last_op === sNOP
   last_op := Mux(ready_for_op, io.op, sNOP)
+  io.ready := ready_for_op
 
   val levels = for(i<- 1 until num_stages) yield{
     Module(new PriorityQueueHeapLevel(stage_id = i))
@@ -26,6 +27,10 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
   for(i<- 1 until num_stages - 1){
     levels(i-1).io.bot <> levels(i).io.top
   }
+
+  levels.last.io.bot.l_occupied := false.B
+  levels.last.io.bot.r_occupied := false.B
+  levels.last.io.bot.capacity := 0.U
 
   val count = RegInit(0.U(num_stages.W))
   switch(io.op){
@@ -44,6 +49,7 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
     val out = Output(new PriorityQueueBundle)
     val count = Output(UInt(num_stages.W))
     val op = Input(UInt(2.W))
+    val ready = Output(Bool())
   }
 
   class PriorityQueueBundle  extends Bundle{
@@ -101,7 +107,13 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
     private val trans_dest_tmp = Seq.fill(2)(Wire(Bits(1.W)))
 
     trans_op := sNOP
-    //  trans_val := io.top.data
+
+    /* Dequeue and replace operations read two values from the child level. These values
+     * are read from two consecutive address. Therefore the memory and relevant signals
+     * have been split into two groups odd(left) and even(right). The logic for each group
+     * has been explicitly stated so that the synthesizer doesn't confuse them as a single
+     * memory with two read port.
+     */
 
     switch(io.top.op){
       is(sENQUEUE){
@@ -156,6 +168,60 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
         })
         trans_idx := Cat(io.top.index, Mux(side === 0.U, trans_dest_tmp(0), trans_dest_tmp(1)))
       }
+      is(sREPLACE){
+        trans_op := sREPLACE
+        (0 to 1).map(s =>{
+          when(s.U === side){
+            when(io.bot.l_occupied && io.bot.r_occupied){
+              when(io.bot.l_data.priority < io.bot.r_data.priority){
+                when(io.bot.l_data.priority < io.top.data.priority){
+                  nxt_val_tmp(s) := io.bot.l_data
+                  trans_dest_tmp(s) := sLEFT
+                  trans_val_tmp(s) := io.top.data
+                }.otherwise{
+                  nxt_val_tmp(s) := io.top.data
+                  trans_op := sNOP
+                }
+              }.otherwise{
+                when(io.bot.r_data.priority < io.top.data.priority){
+                  nxt_val_tmp(s) := io.bot.r_data
+                  trans_dest_tmp(s) := sRIGHT
+                  trans_val_tmp(s) := io.top.data
+                }.otherwise{
+                  nxt_val_tmp(s) := io.top.data
+                  trans_op := sNOP
+                }
+              }
+            }.elsewhen(io.bot.l_occupied){
+              when(io.bot.l_data.priority < io.top.data.priority){
+                nxt_val_tmp(s) := io.bot.l_data
+                trans_dest_tmp(s) := sLEFT
+                trans_val_tmp(s) := io.top.data
+              }.otherwise{
+                nxt_val_tmp(s) := io.top.data
+                trans_op := sNOP
+              }
+            }.elsewhen(io.bot.r_occupied){
+              when(io.bot.r_data.priority < io.top.data.priority){
+                nxt_val_tmp(s) := io.bot.r_data
+                trans_dest_tmp(s) := sRIGHT
+                trans_val_tmp(s) := io.top.data
+              }.otherwise{
+                nxt_val_tmp(s) := io.top.data
+                trans_op := sNOP
+              }
+            }.otherwise{
+              nxt_val_tmp(s) := io.top.data
+              trans_op := sNOP
+            }
+
+            mem(s).write(pos, nxt_val_tmp(s))
+          }
+        })
+
+        trans_val := Mux(side === 0.U, trans_val_tmp(0), trans_val_tmp(1))
+        trans_idx := Cat(io.top.index, Mux(side === 0.U, trans_dest_tmp(0), trans_dest_tmp(1)))
+      }
       is(sNOP){
         io.top.capacity := capacity(0)(par_idx)
         io.top.l_occupied:= occupied(0)(par_idx)
@@ -165,7 +231,6 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
       }
     }
   }
-
 }
 
 object PriorityQueue extends App{
