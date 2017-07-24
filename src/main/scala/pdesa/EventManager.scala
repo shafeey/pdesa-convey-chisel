@@ -2,7 +2,7 @@ package pdesa
 
 import chisel3._
 import chisel3.util._
-import pdesa.PriorityQueue
+import pdesa._
 
 
 class EventDataBundle[D <: Data](data_type: D, LP_id_bits: Int, time_bits: Int) extends Bundle {
