@@ -100,11 +100,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   // TODO: Sizes can be adjusted
   val hist_recv_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
   when(hist_queue_enq.fire) {
-    printf("EP %d # Received history. Count: %d, LP: %d", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
+    printf("EP %d # Received history. Count: %d, LP: %d (", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
     when(hist_queue_enq.bits.cancel_evt) {
-      printf(" (Cancel at time: %d\n", hist_queue_enq.bits.origin_time)
+      printf("Cancel at time: %d)\n", hist_queue_enq.bits.origin_time)
     }.otherwise {
-      printf("-->%d, time: %d-->%d\n", hist_queue_enq.bits.target_lp, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.target_time)
+      printf("-->%d, time: %d-->%d)\n", hist_queue_enq.bits.target_lp, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.target_time)
     }
 
     hist_recv_cnt := hist_recv_cnt + 1.U
@@ -201,9 +201,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
           when(evt_out_q.io.enq.fire()) {
             printf("EP %d # Cancellation(quash) event at time: %d, LP: %d --> GVT: %d\n", core_id.U, match_data.target_time, match_data.target_lp, gvt)
             state := sHIST_WR
-          }.otherwise {
-            printf("EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
           }
+        }.otherwise {
+          printf("EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
+          state := sHIST_WR
         }
         /* If cancellation not needed, no new event shall be generated */
       }.otherwise {
@@ -262,7 +263,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
           evt_out_q.io.enq.valid := true.B
           when(evt_out_q.io.enq.ready) {
             rollback_not_cancel := true.B
-            printf("EP %d # Cancellation event at time: %d, LP: %d --> GVT: %d\n", core_id.U, filt_queue.bits.target_time, filt_queue.bits.target_lp, gvt)
+            printf("EP %d # Cancellation event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.target_time, filt_queue.bits.target_lp)
           }
         }
       }.otherwise {
