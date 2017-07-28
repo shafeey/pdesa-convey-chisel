@@ -103,7 +103,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     printf("EP %d # Received history. Count: %d, LP: %d", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
     when(hist_queue_enq.bits.cancel_evt) {
       printf(" (Cancel at time: %d\n", hist_queue_enq.bits.origin_time)
-    }.otherwise{
+    }.otherwise {
       printf("-->%d, time: %d-->%d\n", hist_queue_enq.bits.target_lp, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.target_time)
     }
 
@@ -208,12 +208,23 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         /* If cancellation not needed, no new event shall be generated */
       }.otherwise {
         /* Generate a regular new event randomly */
-        evt_out_q.io.enq.bits.time := event_data.time + rand_offset(4, 0) + 10.U
-        evt_out_q.io.enq.bits.lp_id := rand_lp(Specs.lp_bits - 1, 0)
-        evt_out_q.io.enq.bits.cancel_evt := false.B
+        val gen_evt_time = event_data.time + rand_offset(4, 0) + 10.U
+        val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
+        val gen_evt_type = false.B
+        evt_out_q.io.enq.bits.time := gen_evt_time
+        evt_out_q.io.enq.bits.lp_id := gen_evt_lp
+        evt_out_q.io.enq.bits.cancel_evt := gen_evt_type
         evt_out_q.io.enq.valid := true.B
+
+        filt_enq.bits.origin_time := event_data.time
+        filt_enq.bits.target_time := gen_evt_time
+        filt_enq.bits.target_lp := gen_evt_lp
+        filt_enq.bits.cancel_evt := gen_evt_type
+        filt_enq.valid := true.B
+        //TODO: This may be source of future bug since we're not checking ready for filt_queue
+
         when(evt_out_q.io.enq.fire) {
-          printf("EP %d # Generate event at time: %d, LP: %d\n", core_id.U, evt_out_q.io.enq.bits.time, evt_out_q.io.enq.bits.lp_id)
+          printf("EP %d # Generate event for LP: %d at time: %d\n", core_id.U, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
           state := sHIST_WR
         }
       }
@@ -259,7 +270,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         io.hist_req.bits.setWrite(core_id.U, event_data.lp_id, filt_queue.bits)
         when(io.hist_req.ready) {
           filt_queue.ready := true.B
-          printf("EP %d # Write back history. Count: %d, LP: %d\n", core_id.U, hist_written + 1.U, event_data.lp_id)
+          printf("EP %d # Write back history. Count: %d--> (%d, %d, %d)\n", core_id.U, hist_written + 1.U, filt_queue.bits.target_lp, filt_queue.bits.target_time, filt_queue.bits.cancel_evt)
           hist_written := hist_written + 1.U
         }
       }
