@@ -48,9 +48,10 @@ class EventHistoryReq(lp_bits: Int, time_bits: Int) extends Bundle {
     op := EventHistroyCmnd.sOP_RD
   }
 
-  def setWrite(EP: UInt, LP: UInt, msg: EventHistoryMsg): Unit = {
+  def setWrite(EP: UInt, LP: UInt, pos: UInt, msg: EventHistoryMsg): Unit = {
     origin_lp := LP
     EP_id := EP
+    count := pos
     this.msg := msg
     op := EventHistroyCmnd.sOP_WR
   }

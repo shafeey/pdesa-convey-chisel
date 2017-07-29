@@ -146,6 +146,9 @@ class CoreTesterBase(c: PDESACore) extends AdvTester(c) {
   protected def waitUntilEvtReq() = {
     while (peek(c.io.req_evt.valid) != 1) takestep()
   }
+  protected def checkHistWritePosition(w: HistReq, n: Int) = {
+    expect(w.cnt == n, "History write position isn't correct")
+  }
 }
 
 //noinspection ScalaStyle:magic.number
@@ -171,7 +174,9 @@ class CoreSimpleTester(c: PDESACore) extends CoreTesterBase(c) {
   val evt_msg = HistMsg(time, gen_evt.time, gen_evt.lp, gen_evt.cancel)
 
   val w1 = waitForHistWrReq(msg)
+  checkHistWritePosition(w1, 0)
   val w2 = waitForHistWrReq(evt_msg)
+  checkHistWritePosition(w2, 1)
   takestep()
   takestep()
 
@@ -210,7 +215,9 @@ class CoreRollbackTester(c: PDESACore) extends CoreTesterBase(c) {
   val rb_evt = waitForRollbackEvt(time = 53, lp = lp_id)
 
   val w1 = waitForHistWrReq(msg1)
+  checkHistWritePosition(w1, 0)
   val w2 = waitForHistWrReq(evt_msg)
+  checkHistWritePosition(w2, 1)
 
   takestep()
   takestep()

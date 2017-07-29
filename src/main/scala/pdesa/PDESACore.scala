@@ -268,7 +268,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         }
       }.otherwise {
         io.hist_req.valid := true.B
-        io.hist_req.bits.setWrite(core_id.U, event_data.lp_id, filt_queue.bits)
+        io.hist_req.bits.setWrite(core_id.U, event_data.lp_id, hist_written, filt_queue.bits)
         when(io.hist_req.ready) {
           filt_queue.ready := true.B
           printf("EP %d # Write back history. Count: %d--> (%d, %d, %d)\n", core_id.U, hist_written + 1.U, filt_queue.bits.target_lp, filt_queue.bits.target_time, filt_queue.bits.cancel_evt)
