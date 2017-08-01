@@ -26,7 +26,7 @@ protected class QueueController[T <: Data](event_type: EventDataBundle[T], size:
 
   val count: UInt = pq.io.count
   val deq_valid = Mux(count === 0.U, false.B, pq.io.ready)
-  val enq_ready = Mux(count < size.U && io.out.ready, pq.io.ready, false.B)
+  val enq_ready = Mux(count < size.U || io.out.ready, pq.io.ready, false.B)
 
   io.in.ready := enq_ready
   pq.io.in.data := io.in.bits.data
@@ -67,6 +67,8 @@ class EventManager(num_q: Int) extends Module {
     case (q, i) =>
       /* Process dequeue when an event is requested */
       q.io.out.nodeq()
+      q.io.in.noenq()
+
       io.evt_req(i).nodeq()
       io.out(i).valid := false.B
       when(io.evt_req(i).valid){
