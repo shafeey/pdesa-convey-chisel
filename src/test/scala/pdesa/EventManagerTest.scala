@@ -47,7 +47,9 @@ class EventManagerTesterBase(c: EventManager, num_q: Int) extends AdvTester(c) {
   def reqEvent(qid: Int, cid: BigInt): Unit = {
     req_drivers(qid).inputs.enqueue(cid)
   }
+}
 
+class EventManagerSimpleTester(c: EventManager, num_q: Int) extends EventManagerTesterBase(c, num_q) {
   val ilist = Seq.fill(num_q)(new mutable.ListBuffer[EventData])
   val olist = Seq.fill(num_q)(new mutable.ListBuffer[(Int, EventData)])
 
@@ -65,16 +67,67 @@ class EventManagerTesterBase(c: EventManager, num_q: Int) extends AdvTester(c) {
     expectEvent(i, olist(i).head._1, olist(i).head._2)
     olist(i).remove(0)
   }
+
+  0 until 3 foreach { _ => takestep() }
+}
+
+class EventManagerConcurrentTester(c: EventManager, num_q: Int) extends EventManagerTesterBase(c, num_q) {
+  private val e1 = EventData(1, 11, 0)
+  sendEvent(0, e1)
+  takestep()
+  takestep()
+  private val e2 = EventData(1, 12, 0)
+  sendEvent(0, e2)
+  takestep()
+  takestep()
+  private val e3 = EventData(1, 13, 0)
+  sendEvent(0, e3)
+  0 until 5 foreach { _ => takestep() }
+
+  reqEvent(0, 21)
+  private val e4 = EventData(1, 31, 0)
+  sendEvent(0, e4)
+  takestep()
+
+  reqEvent(0, 22)
+  private val e5 = EventData(1, 32, 0)
+  sendEvent(0, e5)
+  takestep()
+
+  reqEvent(0, 23)
+  private val e6 = EventData(1, 33, 0)
+  sendEvent(0, e6)
+  0 until 5 foreach { _ => takestep() }
+
+  expectEvent(0, 21, e1)
+  expectEvent(0, 22, e2)
+  expectEvent(0, 23, e3)
+  0 until 5 foreach { _ => takestep() }
+
+  reqEvent(0, 24)
+  reqEvent(0, 25)
+  reqEvent(0, 26)
+  expectEvent(0, 24, e4)
+  expectEvent(0, 25, e5)
+  expectEvent(0, 26, e6)
+  0 until 10 foreach { _ => takestep() }
 }
 
 class EventManagerTest extends FreeSpec with Matchers {
   val options = Array("--backend-name", "verilator", "--fint-write-vcd")
 
   "Event Manager should respond properly" - {
-    "with simple input and output" in {
+        "with sequential push and pop" in {
+          chisel3.iotesters.Driver.execute(options,
+            () => new EventManager(num_q = 4)) { c =>
+            new EventManagerSimpleTester(c, num_q = 4)
+          } should be(true)
+        }
+
+    "with concurrent push and pop" in {
       chisel3.iotesters.Driver.execute(options,
         () => new EventManager(num_q = 4)) { c =>
-        new EventManagerTesterBase(c, num_q = 4)
+        new EventManagerConcurrentTester(c, num_q = 4)
       } should be(true)
     }
   }
