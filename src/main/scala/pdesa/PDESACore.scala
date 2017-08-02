@@ -11,7 +11,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
     // Command interface
     val req_evt = Valid(Bool())
-    val done = Valid(Bool())
+    val done = Valid(UInt(log2Ceil(Specs.hist_size).W)) // Also sends the hist count update
 
     // GVT update
     val gvt = Input(UInt(time_bits.W))
@@ -21,7 +21,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
     // Event History interface
     // TODO: Event history
-    val hist_cnt = Flipped(Valid(UInt(log2Ceil(Specs.hist_size).W)))
+    val hist_cnt = Flipped(Valid(UInt(log2Ceil(Specs.hist_size).W))) // Also used for destalling the core
     val hist_req = Decoupled(new EventHistoryReq(lp_bits, time_bits))
     val hist_rsp = Flipped(Valid(new EventHistoryRsp(lp_bits, time_bits)))
   })
