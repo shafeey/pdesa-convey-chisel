@@ -50,17 +50,25 @@ class EventDispatchBundle extends Bundle {
   val tag = UInt(Specs.core_bits.W)
 }
 
+class EventAckMsg extends Bundle{
+  val tag = UInt(Specs.core_bits.W)
+}
+
 class EventManagerIO(num_ifc: Int) extends Bundle {
-  val in = Flipped(Vec(num_ifc, Decoupled(new EventMsg(Specs.lp_bits, Specs.time_bits))))
+  // TODO: Update EventManager Test to reflect change in interface
+  val in = Flipped(Vec(num_ifc, Decoupled(new EventDispatchBundle)))
   val out = Vec(num_ifc, Valid(new EventDispatchBundle))
   val evt_req = Flipped(Vec(num_ifc, Decoupled(UInt(Specs.core_bits.W))))
+  val ack = Vec(num_ifc, Valid(new EventAckMsg))
 }
 
 class EventManager(num_q: Int) extends Module {
   val io = IO(new EventManagerIO(num_q))
 
   val queues = for (i <- 0 until num_q) yield {
-    Module(new QueueController(new EventDataBundle(io.in(0).bits, Specs.lp_bits, Specs.time_bits), Specs.queue_size))
+    Module {
+      new QueueController(new EventDataBundle(io.in(0).bits.msg, Specs.lp_bits, Specs.time_bits), Specs.queue_size)
+    }
   }
 
   queues.zipWithIndex.foreach {
@@ -68,6 +76,7 @@ class EventManager(num_q: Int) extends Module {
       /* Process dequeue when an event is requested */
       q.io.out.nodeq()
       q.io.in.noenq()
+      io.ack(i).valid := false.B
 
       io.evt_req(i).nodeq()
       io.out(i).valid := false.B
@@ -83,11 +92,15 @@ class EventManager(num_q: Int) extends Module {
 
       /* Direct incoming events to the queue */
       val evt_bundle = Wire(q.io.in.bits)
-      evt_bundle.time := io.in(i).bits.time
-      evt_bundle.data := io.in(i).bits
+      evt_bundle.time := io.in(i).bits.msg.time
+      evt_bundle.data := io.in(i).bits.msg
       io.in(i).ready := q.io.in.ready
       when(io.in(i).valid){
         q.io.in.enq(evt_bundle)
       }
+
+      /* Generate acknowledgement message for the origination core */
+
+
   }
 }

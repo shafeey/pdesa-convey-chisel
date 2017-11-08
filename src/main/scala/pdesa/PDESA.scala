@@ -55,6 +55,9 @@ class PDESA extends Module {
     gen_xbar.io.si(i) <> evt_mgr.io.in(i) // Crossbar to event manager input
   }
 
+  /* Returns acknowledgement from Event Manager to the originating core */
+
+
   /* Deliver event from event queue to cores through a crossbar and then broadcast */
   def evtIssueFilter(id: Int, in: DecoupledIO[EventDispatchBundle]): Valid[EventMsg] = {
     val out = Valid(new EventMsg(Specs.lp_bits, Specs.time_bits))

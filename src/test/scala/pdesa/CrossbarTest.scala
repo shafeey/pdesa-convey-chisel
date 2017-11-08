@@ -13,7 +13,7 @@ class CrossbarWrapper extends Module{
   private val n_mi = CrossbarTestSpecs.n_mi
 
   private val dtype = CrossbarTestSpecs.dtype
-  private val cb_entry = Wire(Flipped(new CrossbarEntry(dtype, n_si)))
+  private val cb_entry = Wire(Flipped(new CrossbarBundle(dtype, n_si)))
 
   val io = IO(new Bundle{
     val mi = Flipped(Vec(n_mi, Decoupled(UInt(cb_entry.getWidth.W))))
@@ -23,7 +23,7 @@ class CrossbarWrapper extends Module{
   val cb_module = Module(new Crossbar(dtype, n_mi, n_si))
 
   for(i<- 0 until n_mi){
-    cb_module.io.mi(i).bits := io.mi(i).bits.asTypeOf(new CrossbarEntry(dtype, n_si))
+    cb_module.io.mi(i).bits := io.mi(i).bits.asTypeOf(new CrossbarBundle(dtype, n_si))
     cb_module.io.mi(i).valid := io.mi(i).valid
     io.mi(i).ready := cb_module.io.mi(i).ready
   }
