@@ -3,17 +3,23 @@ package pdesa
 import chisel3._
 import chisel3.util._
 
+// TODO: Implement logic to account for ack before quitting
+// TODO: Drive last processed timestamp for GVT computation
 class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   val io = IO(new Bundle {
     // Event exchange conversations
-    val generated_evt = Decoupled(new EventMsg(lp_bits, time_bits))
+    // TODO: Update test - change of interface
+    val generated_evt = Decoupled(new EventDispatchBundle)
     val issued_evt = Flipped(Valid(new EventMsg(lp_bits, time_bits)))
+    val dispatch_ack = Flipped(Valid(new EventAckMsg))
 
     // Command interface
+    val start = Flipped(Valid(new StartMsg)) // Also sends the history data count
     val req_evt = Valid(Bool())
-    val done = Valid(UInt(log2Ceil(Specs.hist_size).W)) // Also sends the hist count update
+    val finished = Decoupled(new CoreFinishedSignal)
 
     // GVT update
+    val last_proc_ts = Output(UInt(time_bits.W))
     val gvt = Input(UInt(time_bits.W))
 
     // Memory Access Interface
@@ -21,7 +27,6 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
     // Event History interface
     // TODO: Event history
-    val hist_cnt = Flipped(Valid(UInt(log2Ceil(Specs.hist_size).W))) // Also used for destalling the core
     val hist_req = Decoupled(new EventHistoryReq(lp_bits, time_bits))
     val hist_rsp = Flipped(Valid(new EventHistoryRsp(lp_bits, time_bits)))
   })
@@ -35,16 +40,16 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   val event_data = Reg(io.issued_evt.bits.cloneType)
   val event_valid = RegInit(false.B)
   val gvt = RegInit(io.gvt.cloneType, init = 0.U)
-  val event_requested = RegInit(false.B)
+//  val event_requested = RegInit(false.B)
 
   io.req_evt.valid := false.B
 
   def IDLE_task = {
-    when(!event_requested) {
-      event_requested := true.B
-      io.req_evt.valid := true.B
-      stalled := true.B
-    }
+//    when(!event_requested) {
+//      event_requested := true.B
+//      io.req_evt.valid := true.B
+//      stalled := true.B
+//    }
     when(io.issued_evt.valid) {
       /* DEBUG */
       val ne = io.issued_evt.bits
@@ -58,12 +63,17 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       event_valid := true.B
       gvt := io.gvt
       state := sSTALL
-      event_requested := false.B // Clear flag for next iteration
+//      event_requested := false.B // Clear flag for next iteration
     }
   }
 
   // Stall logic
-  val stalled = RegInit(false.B)
+  val stalled = RegInit(true.B)
+  val hist_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
+  when(io.start.valid) {
+    hist_cnt := io.start.bits.hist_size
+    stalled := false.B
+  }
 
   def STALL_task = {
     when(!stalled) {
@@ -73,14 +83,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   }
 
   // Event hist read
-  val hist_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
-  when(io.hist_cnt.valid) {
-    hist_cnt := io.hist_cnt.bits
-    stalled := false.B
-  }
-
   io.hist_req.noenq()
-
   def HIST_RD_task = {
     io.hist_req.valid := true.B
     io.hist_req.bits.setRead(core_id.U, event_data.lp_id, hist_cnt)
@@ -182,7 +185,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   val evt_out_q = Module(new Queue(Wire(new EventMsg(lp_bits, time_bits)), Specs.hist_size))
   evt_out_q.io.enq.noenq()
 
-  io.generated_evt <> evt_out_q.io.deq
+  // TODO: Update test for change in interface
+  io.generated_evt.bits.tag := core_id.U
+  io.generated_evt.bits.msg := evt_out_q.io.deq.bits
+  io.generated_evt.valid := evt_out_q.io.deq.valid
+  evt_out_q.io.deq.ready := io.generated_evt.ready
 
 
   filt_queue.nodeq()
@@ -290,20 +297,22 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   }
 
   // Finalise
-  io.done.valid := false.B
-
+  io.finished.noenq()
   def FINALISE_task = {
     when(hist_wr_success_cnt === hist_written && !evt_out_q.io.deq.valid) {
-      state := sIDLE
-      printf("EP %d # Wrapping up\n", core_id.U)
-      io.done.valid := true.B
-      RESTART_task
+      io.finished.valid := true.B
+      io.finished.bits.setValue(core_id = core_id.U, lp = event_data.lp_id, hist_size = hist_written)
+      when(io.finished.fire()) {
+        state := sIDLE
+        printf("EP %d # Wrapping up\n", core_id.U)
+      }
+      reinitialize_task
     }
   }
 
 
   // RESTART logic
-  def RESTART_task = {
+  def reinitialize_task = {
     hist_cnt := 0.U
     stalled := true.B
     hist_recv_cnt := 0.U

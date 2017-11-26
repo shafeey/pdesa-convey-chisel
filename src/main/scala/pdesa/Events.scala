@@ -23,6 +23,8 @@ class EventHistoryMsg(lp_bits: Int, time_bits: Int) extends Bundle {
   val target_lp = UInt(lp_bits.W)
   val cancel_evt = Bool()
 
+  def hist_wid: Int = time_bits + time_bits + lp_bits + 1
+
   override def cloneType: EventHistoryMsg.this.type =
     new EventHistoryMsg(lp_bits, time_bits).asInstanceOf[this.type]
 }

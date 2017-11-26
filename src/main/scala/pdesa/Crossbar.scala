@@ -26,6 +26,13 @@ class CrossbarBundle[T <: Data](dtype: T, n_si: Int) extends Bundle{
 class CrossbarIO[T <: Data](dtype: T, n_mi: Int, n_si: Int) extends Bundle {
   val mi = Flipped(Vec(n_mi, Decoupled(new CrossbarBundle(dtype, n_si))))
   val si = Vec(n_si, Decoupled(dtype))
+
+  def insert(i: Int, addr: UInt, data_in: DecoupledIO[T]): Unit = {
+    data_in.ready := mi(i).ready
+    mi(i).valid := data_in.valid
+    mi(i).bits.data := data_in.bits
+    mi(i).bits.addr := Reverse(Reverse(addr)(log2Ceil(n_si)-1, 0))
+  }
 }
 
 /** Hardware module to direct data to target slave node. Provides unidirectional data transfer.
