@@ -6,7 +6,6 @@ import org.scalatest.{FreeSpec, Matchers}
 
 import scala.collection.mutable
 
-
 class PDESATester(c: PDESA) extends PeekPokeTester(c){
   val max_cycle = 2000
   val target_gvt = 25
@@ -197,6 +196,7 @@ class PDESATest extends FreeSpec with Matchers {
 //    "--backend-name", "firrtl",
     "--backend-name", "verilator",
 //    "--is-verbose",
+    "--split-modules",
     "--fint-write-vcd"
   )
 

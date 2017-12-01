@@ -78,9 +78,12 @@ class CoreStallController extends Module{
     val r_tgt_core = RegNext(tgt_core)
     val r_lp_id = RegNext(active_msg.lp_id)
     val r_active = RegNext(next = core_active(g))
-    val matches = Cat(core_lp_assoc(g).zipWithIndex.map{case (lp, i) => Mux(r_active(i), lp === r_lp_id, false.B)}).orR
+
+    val core_lp_matches = Wire(Vec(Specs.num_cores, Bool()))
+    for(i <- 0 until Specs.num_cores){core_lp_matches(i) := Mux(r_active(i), core_lp_assoc(g)(i) === r_lp_id, false.B)}
+    val matches = core_lp_matches.asUInt().orR()
     // if no active cores matches, should create a start signal
-    val sig_start = Pipe(enqValid = r_issued & ~matches, enqBits = r_tgt_core, latency = min_reducer.getLatency)
+    val sig_start = Pipe(enqValid = r_issued & !matches, enqBits = r_tgt_core, latency = min_reducer.getLatency)
     val tgt_lp_delayed = Pipe(enqValid = true.B, enqBits = r_lp_id, latency = min_reducer.getLatency)
 
     /* When cores finish: search for stalling cores */
@@ -89,7 +92,7 @@ class CoreStallController extends Module{
       stall_matches(c) := Mux(r_active(c), core_lp_assoc(g)(c) === r_returned_lp && r_returned, false.B)
     }
     // Find the lowest TS among active cores
-    min_reducer.io.mask := stall_matches.asUInt() & (~r_returned_core).asUInt()
+    min_reducer.io.mask := stall_matches.asUInt() & (~(1.U << r_returned_core)).asUInt()
     min_reducer.io.time := core_time_assoc(g)
     val min_id = min_reducer.io.min_id
     val min_vld = min_reducer.io.valid
