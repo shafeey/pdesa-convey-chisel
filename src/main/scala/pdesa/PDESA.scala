@@ -4,14 +4,32 @@ import chisel3._
 import chisel3.util._
 
 //noinspection ScalaStyle
+//object Specs {
+//  val num_cores = 64
+//  val num_lp = 512
+//  val num_events = 1000
+//  val time_bits = 16
+//
+//  val num_core_grp = 8
+//  val num_queues = 4
+//  val queue_size = 255
+//
+//  val hist_size = 16
+//
+//  val sim_end_time = 1000
+//
+//  def lp_bits = log2Ceil(num_lp)
+//
+//  def core_bits = log2Ceil(num_cores)
+//}
 object Specs {
-  val num_cores = 64
-  val num_lp = 512
-  val num_events = 1000
+  val num_cores = 4
+  val num_lp = 16
+  val num_events = 16
   val time_bits = 16
 
-  val num_core_grp = 8
-  val num_queues = 4
+  val num_core_grp = 2
+  val num_queues = 2
   val queue_size = 255
 
   val hist_size = 16
@@ -28,9 +46,11 @@ class PDESA extends Module {
     val start = Input(Bool())
     val target_gvt = Input(UInt(Specs.time_bits.W))
     val done = Valid(UInt(Specs.time_bits.W))
+
+    val dbg: DebugSignalBundle = new DebugSignalBundle
   })
 
-  val global_start = RegInit(init = false.B)
+//  val global_start = RegInit(init = false.B)
 
   // Instantiate cores
   val cores = for (i <- 0 until Specs.num_cores) yield {
@@ -43,7 +63,6 @@ class PDESA extends Module {
   }
 
   val evt_mgr = Module(new EventManager(Specs.num_queues))
-  val evt_init_arb = Seq.fill(Specs.num_queues)(Module(new Arbiter(new EventDispatchBundle, n = 2)))
 
   /* Deliver event from core to event queue through arbiter and crossbar */
   for (i <- 0 until Specs.num_core_grp) {
@@ -61,7 +80,7 @@ class PDESA extends Module {
   /* Returns acknowledgement from Event Manager to the originating core */
   def ackFilter(id: Int, in: DecoupledIO[EventAckMsg]) : Valid[EventAckMsg] = {
     val out = Wire(Valid(new EventAckMsg))
-    out.valid := Mux(in.bits.tag === id.U, true.B, false.B)
+    out.valid := in.valid && in.bits.tag === id.U
     out.bits := in.bits
     out
   }
@@ -85,7 +104,7 @@ class PDESA extends Module {
   /* Deliver event from event queue to cores through a crossbar and then broadcast */
   def evtIssueFilter(id: Int, in: DecoupledIO[EventDispatchBundle]): Valid[EventMsg] = {
     val out = Wire(Valid(new EventMsg(Specs.lp_bits, Specs.time_bits)))
-    out.valid := Mux(in.bits.tag === id.U, true.B, false.B)
+    out.valid := in.valid && in.bits.tag === id.U
     out.bits := in.bits.msg
     out
   }
@@ -96,7 +115,7 @@ class PDESA extends Module {
     // Convert ValidIO to DecoupledIO
     issue_evt.valid := evt_mgr.io.out(i).valid
     issue_evt.bits := evt_mgr.io.out(i).bits
-    val issue_target = evt_mgr.io.ack(i).bits.tag(Specs.core_bits - 1, Specs.core_bits - log2Ceil(Specs.num_core_grp))
+    val issue_target = evt_mgr.io.out(i).bits.tag(Specs.core_bits - 1, Specs.core_bits - log2Ceil(Specs.num_core_grp))
     issue_xbar.io.insert(i, issue_target, issue_evt)
   }
   for(i<- 0 until Specs.num_core_grp){
@@ -119,26 +138,25 @@ class PDESA extends Module {
   /* Cores receive start signal from controller */
   def startFilter(id: Int, in: DecoupledIO[StartMsg]) : Valid[StartMsg] = {
     val out = Wire(Valid(new StartMsg))
-    out.valid := Mux(in.bits.core_id === id.U, true.B, false.B)
+    out.valid := in.valid && in.bits.core_id === id.U
     out.bits := in.bits
     out
   }
 
   val start_xbar = Module(new Crossbar(new StartMsg, Specs.num_queues, Specs.num_core_grp))
   for(i<- 0 until Specs.num_queues){
-    val start_msg = Wire(Decoupled(new StartMsg))
-    // Convert ValidIO to DecoupledIO
-    start_msg.valid := controller.io.start_sig(i).valid
-    start_msg.bits := controller.io.start_sig(i).bits
-    start_xbar.io.insert(i, controller.io.start_sig(i).bits.core_id, start_msg)
+    val start_sig = controller.io.start_sig(i)
+    start_xbar.io.insert(i, start_sig.bits.core_id, start_sig)
   }
   start_xbar.io.si.foreach(_.ready := true.B)// Convert DecoupledIO to ValidIO
   for (i <- 0 until Specs.num_cores) {
     val destall = startFilter(i, start_xbar.io.si(i/Specs.num_core_grp))
-    val g_start_msg = Wire(new StartMsg)
-    g_start_msg.hist_size := 0.U
-    cores(i).io.start.bits := Mux(global_start, g_start_msg, destall.bits)
-    cores(i).io.start.valid := global_start || destall.valid
+//    val g_start_msg = Wire(new StartMsg)
+//    g_start_msg.hist_size := 0.U
+//    cores(i).io.start.bits := Mux(global_start, g_start_msg, destall.bits)
+//    cores(i).io.start.valid := global_start || destall.valid
+    cores(i).io.start.bits := destall.bits
+    cores(i).io.start.valid := destall.valid
   }
 
   /* Cores signals controllers when they return */
@@ -152,6 +170,9 @@ class PDESA extends Module {
       cores(i * Specs.num_cores / Specs.num_core_grp + j).io.finished <> ret_arbs(i).io.in(j)
     }
     ret_xbar.io.insert(i, ret_arbs(i).io.out.bits.last_lp, ret_arbs(i).io.out) // arbiter to xbar input
+  }
+  for(q <- 0 until Specs.num_queues){
+    controller.io.finished(q) <> ret_xbar.io.si(q)
   }
 
   /* Controller request events for idle cores */
@@ -168,7 +189,7 @@ class PDESA extends Module {
   /* Event history is broadcast to cores */
   def histFilter(id: Int, in: Valid[EventHistoryRsp]): Valid[EventHistoryRsp] = {
     val out = Wire(Valid(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits)))
-    out.valid := Mux(in.bits.tag === id.U, true.B, false.B)
+    out.valid := in.valid && in.bits.EP_id === id.U
     out.bits := in.bits
     out
   }
@@ -184,40 +205,79 @@ class PDESA extends Module {
 
   /* Control states */
   io.done.valid := false.B
+  io.done.bits := gvt
+
+  evt_mgr.io.init.noenq()
 
   val sIDLE::sINIT::sRUNNING::sEND::Nil = Enum(4)
   val state = RegInit(sIDLE)
+
+  gvt_resolver.io.compute := state === sRUNNING
 
   switch(state){
     is(sIDLE){
       when(io.start) {
         state := sINIT
+        printf(">>> Initializing simulator <<<\n")
       }
     }
     is(sINIT){
-      evt_mgr.io.init.valid := true.B
+      evt_mgr.io.init.enq(true.B)
       when(evt_mgr.io.init.ready){
+        printf(">>> Initialization complete: Run simulation <<<\n")
         state := sRUNNING
-        global_start := true.B
+//        global_start := true.B
       }
     }
     is(sRUNNING){
-      global_start := false.B
+//      global_start := false.B
       when(gvt > Specs.sim_end_time.U){
         state := sEND
       }
     }
     is(sEND){
       state := sIDLE
-      printf(">>> Reached end of simulation <<<")
+      printf(">>> Reached end of simulation <<<\n")
       io.done.valid := true.B
-      io.done.bits := gvt
     }
   }
+
+  /* Debug connections */
+  def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
+    val v = Wire(Valid(in.bits.cloneType))
+    v.valid := in.fire()
+    v.bits := in.bits
+    v
+  }
+  def makeDbgIO[T <: Data](in: ValidIO[T]) : ValidIO[T] = {
+    val v = Wire(Valid(in.bits.cloneType))
+    v <> in
+    v
+  }
+
+  io.dbg.enqueue.zip(evt_mgr.io.in).foreach(w => w._1 := makeDbgIO(w._2))
+  io.dbg.issue.zip(evt_mgr.io.out).foreach(w => w._1 := makeDbgIO(w._2))
+  io.dbg.start.zip(controller.io.start_sig).foreach(w => w._1 := makeDbgIO(w._2))
+  io.dbg.gen.zip(cores.map(_.io.generated_evt)).foreach(w => w._1 := makeDbgIO(w._2))
+  io.dbg.finish.zip(cores.map(_.io.finished)).foreach(w => w._1 := makeDbgIO(w._2))
+  io.dbg.gvt := gvt
+}
+
+class DebugSignalBundle extends Bundle{
+  val enqueue = Vec(Specs.num_queues, Valid(new EventDispatchBundle))
+  val issue = Vec(Specs.num_queues, Valid(new EventDispatchBundle))
+  val start = Vec(Specs.num_queues, Valid(new StartMsg))
+  val gen = Vec(Specs.num_cores, Valid(new EventDispatchBundle))
+  val finish = Vec(Specs.num_cores, Valid(new CoreFinishedSignal))
+  val gvt = Output(UInt(Specs.time_bits.W))
 }
 
 object PDESA extends App {
-  chisel3.Driver.execute(args, () => {
+  val options = Array(
+    "--split-modules",
+    "--target-dir", "verilog"
+  )
+  chisel3.Driver.execute(options, () => {
     new PDESA
   })
 }

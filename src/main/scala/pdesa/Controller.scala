@@ -26,7 +26,8 @@ class CoreStallController extends Module{
     val evt_msg_passthru = Vec(Specs.num_queues, Decoupled(new EventDispatchBundle))
     val finished = Flipped(Vec(Specs.num_queues, Decoupled(new CoreFinishedSignal)))
     val finished_passthru = Vec(Specs.num_queues, Decoupled(new CoreFinishedSignal))
-    val start_target = Vec(Specs.num_queues, Valid(UInt(Specs.core_bits.W)))
+//    val start_target = Vec(Specs.num_queues, Valid(UInt(Specs.core_bits.W)))
+    val start_target = Vec(Specs.num_queues, Valid(new StartMsg))
   })
 
 
@@ -71,6 +72,7 @@ class CoreStallController extends Module{
 //      core_active(g)(returned_core) := false.B
     }
 
+    val min_reducer = Module(new MinResolverBinTree(Specs.num_cores, 1))
     /* Find existing cores having same LP */
     // Register them to prevent synthesis nightmare later
     val r_tgt_core = RegNext(tgt_core)
@@ -78,27 +80,31 @@ class CoreStallController extends Module{
     val r_active = RegNext(next = core_active(g))
     val matches = Cat(core_lp_assoc(g).zipWithIndex.map{case (lp, i) => Mux(r_active(i), lp === r_lp_id, false.B)}).orR
     // if no active cores matches, should create a start signal
-    val sig_start = Pipe(enqValid = r_issued & ~matches, enqBits = r_tgt_core, latency = log2Ceil(Specs.num_cores) + 1)
+    val sig_start = Pipe(enqValid = r_issued & ~matches, enqBits = r_tgt_core, latency = min_reducer.getLatency)
+    val tgt_lp_delayed = Pipe(enqValid = true.B, enqBits = r_lp_id, latency = min_reducer.getLatency)
 
     /* When cores finish: search for stalling cores */
-    val stall_matches: Seq[Bool] = core_lp_assoc(g).zipWithIndex.map{
-      case(lp, i) => Mux(r_active(i), lp === r_returned_lp && r_returned, false.B)
+    val stall_matches = Wire(Vec(Specs.num_cores, Bool()))
+    for(c<- 0 until Specs.num_cores){
+      stall_matches(c) := Mux(r_active(c), core_lp_assoc(g)(c) === r_returned_lp && r_returned, false.B)
     }
     // Find the lowest TS among active cores
-    val min_reducer = Module(new MinResolverBinTree(Specs.num_cores, 1))
-    min_reducer.io.mask := Cat(stall_matches) & (~r_returned_core).asUInt()
+    min_reducer.io.mask := stall_matches.asUInt() & (~r_returned_core).asUInt()
     min_reducer.io.time := core_time_assoc(g)
     val min_id = min_reducer.io.min_id
     val min_vld = min_reducer.io.valid
+    val returned_lp_delayed = Pipe(enqValid = true.B, enqBits = r_returned_lp, latency = min_reducer.getLatency)
+
     // Create a start signal generated because some core has returned
     io.start_target(g).valid := sig_start.valid || min_vld
-    io.start_target(g).bits := Mux(sig_start.valid, sig_start.bits, min_id)
+    io.start_target(g).bits.core_id := Mux(sig_start.valid, sig_start.bits, min_id)
+    io.start_target(g).bits.lp_id := Mux(sig_start.valid, tgt_lp_delayed.bits, returned_lp_delayed.bits)
   }
 }
 
 private class MinResolverBinTree(wid: Int, stage_per_cycle: Int) extends Module{
   val io = IO(new Bundle{
-    val mask = Input(UInt(Specs.core_bits.W))
+    val mask = Input(UInt(Specs.num_cores.W))
 //    val mask = Input(Vec(wid, Bool()))
     val time = Input(Vec(wid, UInt(Specs.time_bits.W)))
 
@@ -132,6 +138,7 @@ private class MinResolverBinTree(wid: Int, stage_per_cycle: Int) extends Module{
 
   io.valid := act(0)(0)
   io.min_id := idx(0)(0)
+  def getLatency: Int = num_stages + 1
 }
 
 class GVTResolver extends Module{
@@ -152,7 +159,6 @@ class GVTResolver extends Module{
   val queue_min = RegInit(0.U(Specs.time_bits.W))
 
   val min_res = Module(new MinResolverScan)
-  min_res.io.active_cores := active_cores
   min_res.io.core_times.zip(io.last_processed_ts).foreach{case(m, c) => m := c}
   min_res.io.start := compute
 
@@ -188,29 +194,24 @@ class GVTResolver extends Module{
 
 protected class MinResolverScan extends Module {
   val io = IO(new Bundle {
-    val active_cores = Input(UInt(Specs.num_cores.W))
     val core_times = Input(Vec(Specs.num_cores, UInt(Specs.time_bits.W)))
     val start = Input(Bool())
-
     val min = Output(UInt(Specs.time_bits.W))
     val vld = Output(Bool())
   })
 
   val num_seg = 4
   val seg_min: Seq[UInt] = Seq.fill(num_seg)(Reg(UInt(Specs.time_bits.W)))
-  val seg_valid = Seq.fill(num_seg)(RegInit(false.B))
   val elem_per_seg = Specs.num_cores/num_seg
-  val seg_elems = Seq.fill(num_seg)(Wire(Vec(elem_per_seg, UInt(Specs.time_bits.W))))
-  for (s <- 0 until num_seg){
+  val seg_elems = for (s <- 0 until num_seg) yield{
+    val w = Wire(Vec(elem_per_seg, UInt(Specs.time_bits.W)))
     for(i<- 0 until elem_per_seg){
-      seg_elems(s)(i) := io.core_times(s*elem_per_seg + i)
+      w(i) := io.core_times(s*elem_per_seg + i)
     }
-  }
-  val seg_actives = for (s <- 0 until num_seg) yield {
-    io.active_cores((s+1)*elem_per_seg -1, s*elem_per_seg)
+    w
   }
 
-  val counter = RegInit(0.U(log2Ceil(elem_per_seg).W))
+  val counter = RegInit(0.U(log2Up(elem_per_seg).W))
 
   val sIDLE :: sSCAN :: sREDUCE :: Nil = Enum(3)
   val state = RegInit(sIDLE)
@@ -218,27 +219,29 @@ protected class MinResolverScan extends Module {
   val r_vld = RegInit(false.B)
   val r_min = Reg(UInt(Specs.time_bits.W))
 
+  for(s <- 0 until num_seg){
+    val elem = seg_elems(s)(counter)
+    seg_min(s) := Mux(seg_min(s) > elem && state === sSCAN, elem, seg_min(s))
+  }
+
   switch(state){
     is(sIDLE){
       r_vld := false.B
       when(io.start){
         seg_min.foreach(_ := (~0.U(Specs.time_bits.W)).asUInt())
-        seg_valid.foreach(_ := false.B)
         counter := 0.U
         state := sSCAN
       }
     }
     is(sSCAN){
       counter := counter + 1.U
-      seg_valid.zip(seg_actives).foreach{case(v,a) => v := v || a(counter)}
-      seg_min.zip(seg_elems).foreach{case(m, e) => Mux(m < e(counter), m, e(counter))}
       when(counter === elem_per_seg.U){
         state := sREDUCE
       }
     }
     is(sREDUCE){
       r_min := seg_min.reduce((a,b) => Mux(a < b, a, b))
-      r_vld := seg_valid.reduce(_ || _)
+      r_vld := true.B
       state := sIDLE
     }
   }
@@ -249,7 +252,7 @@ protected class MinResolverScan extends Module {
 
 class HistCountManager extends Module{
   val io = IO(new Bundle{
-    val start_target = Flipped(Vec(Specs.num_queues, Valid(UInt(Specs.core_bits.W))))
+    val start_target = Flipped(Vec(Specs.num_queues, Valid(new StartMsg)))
     val start_msg = Vec(Specs.num_queues, Decoupled(new StartMsg))
     val finished = Flipped(Vec(Specs.num_queues, Valid(new CoreFinishedSignal)))
   })
@@ -259,16 +262,16 @@ class HistCountManager extends Module{
   )
 
   for(g <- 0 until Specs.num_queues){
-    val finished_core = io.finished(g).bits.core_id
     when(io.finished(g).valid){
-      histCount(g)(finished_core) := io.finished(g).bits.hist_size
+      histCount(g)(io.finished(g).bits.last_lp) := io.finished(g).bits.hist_size
     }
 
     io.start_msg(g).valid := false.B
     when(io.start_target(g).valid){
-      val target_core = io.start_target(g).bits
+      val target_lp = io.start_target(g).bits.lp_id
+      val target_core = io.start_target(g).bits.core_id
       io.start_msg(g).valid := true.B
-      io.start_msg(g).bits.hist_size := histCount(g)(target_core)
+      io.start_msg(g).bits.hist_size := histCount(g)(target_lp)
       io.start_msg(g).bits.core_id := target_core
     }
   }
@@ -277,6 +280,7 @@ class HistCountManager extends Module{
 class StartMsg extends Bundle{
   val hist_size = UInt(log2Ceil(Specs.hist_size).W)
   val core_id = UInt(Specs.core_bits.W)
+  val lp_id = UInt(Specs.lp_bits.W)
 }
 
 class ControllerIO extends Bundle {
@@ -335,6 +339,10 @@ class Controller extends Module {
     // X3 - Create event request
     io.evt_req(i).valid := req_xbar.io.si(i).valid
     io.evt_req(i).bits := req_xbar.io.si(i).bits.core_id
+    req_xbar.io.si(i).ready := io.evt_req(i).ready
+    when(io.evt_req(i).fire()){
+      printf("~~~~ Requesting new event for EP: %d\n", io.evt_req(i).bits)
+    }
   }
 }
 

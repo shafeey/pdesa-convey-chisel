@@ -52,11 +52,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 //    }
     when(io.issued_evt.valid) {
       /* DEBUG */
-      val ne = io.issued_evt.bits
-      when(ne.cancel_evt) {
-        printf("EP %d # Cancellation event at time: %d, LP: %d --> GVT: %d\n", core_id.U, ne.time, ne.lp_id, io.gvt)
+      val dbg_ne = io.issued_evt.bits
+      when(dbg_ne.cancel_evt) {
+        printf("** EP %d # Cancellation event at time: %d, LP: %d --> GVT: %d\n", core_id.U, dbg_ne.time, dbg_ne.lp_id, io.gvt)
       }.otherwise {
-        printf("EP %d # Received event at time: %d, LP: %d --> GVT: %d\n", core_id.U, ne.time, ne.lp_id, io.gvt)
+        printf("** EP %d # Received event at time: %d, LP: %d --> GVT: %d\n", core_id.U, dbg_ne.time, dbg_ne.lp_id, io.gvt)
       } /* DEBUG */
 
       event_data := io.issued_evt.bits
@@ -77,7 +77,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   def STALL_task = {
     when(!stalled) {
-      printf("EP %d # Released stall for time: %d, LP: %d\n", core_id.U, event_data.time, event_data.lp_id)
+      printf("** EP %d # Start execution - time: %d, LP: %d\n", core_id.U, event_data.time, event_data.lp_id)
       state := sHIST_RD
     }
   }
@@ -85,12 +85,14 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   // Event hist read
   io.hist_req.noenq()
   def HIST_RD_task = {
-    io.hist_req.valid := true.B
-    io.hist_req.bits.setRead(core_id.U, event_data.lp_id, hist_cnt)
-    when(io.hist_req.fire) {
-      printf("EP %d # Request for history. Count: %d, LP: %d\n", core_id.U, hist_cnt, event_data.lp_id)
-      state := sLD_MEM
-    }
+    when(hist_cnt =/= 0.U) {
+      io.hist_req.valid := true.B
+      io.hist_req.bits.setRead(core_id.U, event_data.lp_id, hist_cnt)
+      when(io.hist_req.fire) {
+        printf("++> EP %d # Request for history. Count: %d, LP: %d\n", core_id.U, hist_cnt, event_data.lp_id)
+        state := sLD_MEM
+      }
+    }.otherwise(state := sLD_MEM)
   }
 
   // event history receive queue
@@ -103,7 +105,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   // TODO: Sizes can be adjusted
   val hist_recv_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
   when(hist_queue_enq.fire) {
-    printf("EP %d # Received history. Count: %d, LP: %d (", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
+    printf("<++ EP %d # Received history. Count: %d, LP: %d (", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
     when(hist_queue_enq.bits.cancel_evt) {
       printf("Cancel at time: %d)\n", hist_queue_enq.bits.origin_time)
     }.otherwise {
@@ -194,6 +196,14 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   filt_queue.nodeq()
 
+  val evt_generated = RegInit(0.U(log2Ceil(Specs.hist_size).W))
+  when(state === sIDLE){evt_generated := 0.U}
+    .elsewhen(evt_out_q.io.enq.fire()){evt_generated := evt_generated + 1.U}
+
+  val evt_ack_counter = RegInit(0.U(log2Ceil(Specs.hist_size).W))
+  when(state === sIDLE){evt_ack_counter := 0.U}
+    .elsewhen(io.dispatch_ack.valid){evt_ack_counter := evt_ack_counter + 1.U}
+
   //  when(state === sGEN_EVT){
   def GEN_task = {
     when(!hist_queue.valid) {
@@ -206,11 +216,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
           evt_out_q.io.enq.bits.cancel_evt := true.B
           evt_out_q.io.enq.valid := true.B
           when(evt_out_q.io.enq.fire()) {
-            printf("EP %d # Cancellation(quash) event at time: %d, LP: %d --> GVT: %d\n", core_id.U, match_data.target_time, match_data.target_lp, gvt)
+            printf("** EP %d # Cancellation(quash) event at time: %d, LP: %d --> GVT: %d\n", core_id.U, match_data.target_time, match_data.target_lp, gvt)
             state := sHIST_WR
           }
         }.otherwise {
-          printf("EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
+          printf("** EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
           state := sHIST_WR
         }
         /* If cancellation not needed, no new event shall be generated */
@@ -232,7 +242,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         //TODO: This may be source of future bug since we're not checking ready for filt_queue
 
         when(evt_out_q.io.enq.fire) {
-          printf("EP %d # Generate event for LP: %d at time: %d\n", core_id.U, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
+          printf("** EP %d # Generate event for LP: %d at time: %d\n", core_id.U, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
           state := sHIST_WR
         }
       }
@@ -262,7 +272,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
           when(evt_out_q.io.enq.ready) {
             rollback_not_cancel := false.B
             filt_queue.deq() /* Remove entry only once during rollback+cancel generation */
-            printf("EP %d # Rollback event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.origin_time, event_data.lp_id)
+//            printf("EP %d # Rollback event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.origin_time, event_data.lp_id)
           }
         }.otherwise {
           /* Cancel event */
@@ -270,7 +280,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
           evt_out_q.io.enq.valid := true.B
           when(evt_out_q.io.enq.ready) {
             rollback_not_cancel := true.B
-            printf("EP %d # Cancellation event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.target_time, filt_queue.bits.target_lp)
+//            printf("EP %d # Cancellation event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.target_time, filt_queue.bits.target_lp)
           }
         }
       }.otherwise {
@@ -278,7 +288,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         io.hist_req.bits.setWrite(core_id.U, event_data.lp_id, hist_written, filt_queue.bits)
         when(io.hist_req.ready) {
           filt_queue.ready := true.B
-          printf("EP %d # Write back history. Count: %d--> (%d, %d, %d)\n", core_id.U, hist_written + 1.U, filt_queue.bits.target_lp, filt_queue.bits.target_time, filt_queue.bits.cancel_evt)
+//          printf("EP %d # Write back history. Count: %d--> (%d, %d, %d)\n", core_id.U, hist_written + 1.U, filt_queue.bits.target_lp, filt_queue.bits.target_time, filt_queue.bits.cancel_evt)
           hist_written := hist_written + 1.U
         }
       }
@@ -299,12 +309,12 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   // Finalise
   io.finished.noenq()
   def FINALISE_task = {
-    when(hist_wr_success_cnt === hist_written && !evt_out_q.io.deq.valid) {
+    when(hist_wr_success_cnt === hist_written && !evt_out_q.io.deq.valid && evt_generated === evt_ack_counter) {
       io.finished.valid := true.B
       io.finished.bits.setValue(core_id = core_id.U, lp = event_data.lp_id, hist_size = hist_written)
       when(io.finished.fire()) {
         state := sIDLE
-        printf("EP %d # Wrapping up\n", core_id.U)
+        printf("** EP %d # Wrapping up\n", core_id.U)
       }
       reinitialize_task
     }
@@ -318,6 +328,12 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     hist_recv_cnt := 0.U
     hist_wr_success_cnt := 0.U
   }
+
+  val r_last_processed_ts = RegInit(0.U(Specs.time_bits.W))
+  when(state === sFINALISE){
+    r_last_processed_ts := event_data.time
+  }
+  io.last_proc_ts := r_last_processed_ts
 
 
   switch(state) {

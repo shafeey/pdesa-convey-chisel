@@ -42,8 +42,8 @@ class EventHistoryManager extends Module {
   switch(state) {
     is(sIDLE) {
       when(req.valid && req.bits.op === EventHistroyCmnd.sOP_RD) {
-//        mem_rd := mem.read(addr)
-        printf(p"Reading history from addr: $addr\n")
+        mem_rd := mem.read(addr)
+        printf(p"+++ Reading history from addr: $addr\n")
         r_valid := true.B
         when(req.bits.count > 1.U) {
           state := sREAD
@@ -54,7 +54,7 @@ class EventHistoryManager extends Module {
       }.elsewhen(req.valid && req.bits.op === EventHistroyCmnd.sOP_WR){
         r_valid := true.B
         mem.write(addr, req.bits.msg)
-        printf(p"Writing history at addr: $addr, data: ${req.bits.msg}\n")
+        printf(p"+++ Writing history at addr: $addr, data: ${req.bits.msg}\n")
         req.deq()
       }
     }
