@@ -93,7 +93,7 @@ class CoreStallController extends Module{
     }
     // Find the lowest TS among active cores
     min_reducer.io.mask := stall_matches.asUInt() & (~(1.U << r_returned_core)).asUInt()
-    min_reducer.io.time := core_time_assoc(g)
+    min_reducer.io.time.zip(core_time_assoc(g)).foreach( x => x._1 := x._2)
     val min_id = min_reducer.io.min_id
     val min_vld = min_reducer.io.valid
     val returned_lp_delayed = Pipe(enqValid = true.B, enqBits = r_returned_lp, latency = min_reducer.getLatency)
@@ -117,9 +117,12 @@ private class MinResolverBinTree(wid: Int, stage_per_cycle: Int) extends Module{
   val mask: Vec[Bool] = Vec(io.mask.toBools)
 
   val num_stages = log2Ceil(wid)
-  val s_in = for(s <- 0 to num_stages) yield {Reg(Vec(1 << s, UInt(Specs.time_bits.W)))}
+//  val s_in = for(s <- 0 to num_stages) yield {Reg(Vec(1 << s, UInt(Specs.time_bits.W)))}
+//  val act = for(s <- 0 to num_stages) yield {RegInit(Vec(Seq.fill(1<<s)(false.B)))}
+//  val idx = for(s <- 0 to num_stages) yield {Reg(Vec(1<<s, UInt((log2Ceil(wid)-s).W)))}
+  val s_in = for(s <- 0 to num_stages) yield {RegInit(Vec(Seq.fill(1 << s)(0.U(Specs.time_bits.W))))}
   val act = for(s <- 0 to num_stages) yield {RegInit(Vec(Seq.fill(1<<s)(false.B)))}
-  val idx = for(s <- 0 to num_stages) yield {Reg(Vec(1<<s, UInt((log2Ceil(wid)-s).W)))}
+  val idx = for(s <- 0 to num_stages) yield {RegInit(Vec(Seq.fill(1<<s)(0.U(32.W))))}
 
   s_in(num_stages).zip(io.time).foreach{case(r, in) => r := in}
   act(num_stages).zip(mask).foreach{case(a, m) => a := m}

@@ -197,7 +197,8 @@ class PDESATest extends FreeSpec with Matchers {
     "--backend-name", "verilator",
 //    "--is-verbose",
     "--split-modules",
-    "--fint-write-vcd"
+    "--fint-write-vcd",
+    "--fint-random-seed", "1234"
   )
 
   "Simulation should end with proper GVT" in {

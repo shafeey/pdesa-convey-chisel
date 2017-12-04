@@ -275,6 +275,7 @@ class DebugSignalBundle extends Bundle{
 object PDESA extends App {
   val options = Array(
     "--split-modules",
+//    "--log-level", "Info",
     "--target-dir", "verilog"
   )
   chisel3.Driver.execute(options, () => {
