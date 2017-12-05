@@ -9,14 +9,12 @@ import chisel3.util._
 
 // command bundle for read/writes to AEG/CSR registers
 class RegCommand(idBits: Int, dataBits: Int) extends Bundle {
-  val regID = UInt(idBits.W)
-  val read = Bool()
-  val write = Bool()
+  val regID     = UInt(idBits.W)
+  val read      = Bool()
+  val write     = Bool()
   val writeData = UInt(dataBits.W)
 
-  override def cloneType: RegCommand.this.type = {
-    new RegCommand(idBits, dataBits).asInstanceOf[this.type]
-  }
+  override def cloneType: RegCommand.this.type = { new RegCommand(idBits, dataBits).asInstanceOf[this.type] }
 
   def driveDefaults(): Unit = {
     regID := 0.U
@@ -24,33 +22,38 @@ class RegCommand(idBits: Int, dataBits: Int) extends Bundle {
     write := false.B
     writeData := 0.U
   }
+
+  def getInitClone(): RegCommand = {
+    val clone = Wire(this.cloneType)
+    clone.driveDefaults()
+    clone
+  }
 }
 
 // register file interface
 class RegFileSlaveIF(idBits: Int, dataBits: Int) extends Bundle {
   // register read/write commands
   // the "valid" signal here should be connected to (.read OR .write)
-  val cmd = Flipped(Valid(new RegCommand(idBits, dataBits)))
+  val cmd         = Flipped(Valid(new RegCommand(idBits, dataBits)))
   // returned read data
-  val readData = Valid(UInt(dataBits.W))
+  val readData    = Valid(UInt(dataBits.W))
   // number of registers
-  val regCount = Output(UInt(idBits.W))
+  val regCount    = Output(UInt(idBits.W))
 
-  override def clone: RegFileSlaveIF.this.type = {
-    new RegFileSlaveIF(idBits, dataBits).asInstanceOf[this.type]
-  }
+  override def cloneType: RegFileSlaveIF.this.type = { new RegFileSlaveIF(idBits, dataBits).asInstanceOf[this.type] }
 }
 
+
 class RegFile(numRegs: Int, idBits: Int, dataBits: Int) extends Module {
-  val io = new Bundle {
+  val io = IO(new Bundle {
     // external command interface
     val extIF = new RegFileSlaveIF(idBits, dataBits)
     // exposed values of all registers, for internal use
-    val regOut = Vec(numRegs, UInt(dataBits.W))
+    val regOut = Output(Vec(numRegs, UInt(dataBits.W)))
     // valid pipes for writing new values for all registers, for internal use
     // (extIF takes priority over this)
-    val regIn = Vec(numRegs, Valid(UInt(dataBits.W)))
-  }
+    val regIn = Flipped(Vec(numRegs, Valid(UInt(dataBits.W))))
+  })
   // drive num registers to compile-time constant
   io.extIF.regCount := numRegs.U
 
@@ -58,33 +61,32 @@ class RegFile(numRegs: Int, idBits: Int, dataBits: Int) extends Module {
   val regFile = RegInit(init = Vec(Seq.fill(numRegs)(0.U(dataBits.W))))
 
   // latch the incoming commands
-  val regCommand = RegNext(next = io.extIF.cmd.bits)
-  val regDoCmd = RegNext(init = false.B, next = io.extIF.cmd.valid)
+  val regCommand = RegNext(next = io.extIF.cmd.bits, init = io.extIF.cmd.bits.getInitClone())
 
-  val hasExtReadCommand = (regDoCmd && regCommand.read)
-  val hasExtWriteCommand = (regDoCmd && regCommand.write)
+  val regDoCmd = RegNext(next = io.extIF.cmd.valid, init = false.B)
+
+  val hasExtReadCommand: Bool = regDoCmd && regCommand.read
+  val hasExtWriteCommand: Bool = regDoCmd && regCommand.write
 
   // register read logic
   io.extIF.readData.valid := hasExtReadCommand
   // make sure regID stays within range for memory read
-  when(regCommand.regID < numRegs.U) {
-    io.extIF.readData.bits := regFile(regCommand.regID)
-  }.otherwise {
+  when (regCommand.regID < numRegs.U) {
+    io.extIF.readData.bits  := regFile(regCommand.regID)
+  } .otherwise {
     // return 0 otherwise
-    io.extIF.readData.bits := 0.U
+    io.extIF.readData.bits  := 0.U
   }
 
   // register write logic
   // to avoid multiple ports, we prioritize the extIF writes over the internal
   // ones (e.g if there is an external write present, the internal write will
   // be ignored if it arrives simultaneously)
-  when(hasExtWriteCommand) {
+  when (hasExtWriteCommand) {
     regFile(regCommand.regID) := regCommand.writeData
-  }.otherwise {
-    for (i <- 0 until numRegs) {
-      when(io.regIn(i).valid) {
-        regFile(i) := io.regIn(i).bits
-      }
+  } .otherwise {
+    for(i <- 0 until numRegs) {
+      when (io.regIn(i).valid) { regFile(i) := io.regIn(i).bits }
     }
   }
 
@@ -95,3 +97,4 @@ class RegFile(numRegs: Int, idBits: Int, dataBits: Int) extends Module {
 
   // TODO add testbench for regfile logic
 }
+
