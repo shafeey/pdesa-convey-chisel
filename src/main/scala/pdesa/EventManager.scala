@@ -127,7 +127,7 @@ class EventManager(num_q: Int) extends Module {
 
   /* Supply minimum timestamp among queues for gvt computation */
   val queue_min = queues.map(_.io.out).map(x => Cat(!x.valid, x.bits.time)).reduce((a,b) => Mux(a < b, a, b))
-  io.queue_min.valid := Reverse(queue_min)(0)
+  io.queue_min.valid := !Reverse(queue_min)(0)
   io.queue_min.bits := queue_min(Specs.time_bits - 1, 0)
 }
 

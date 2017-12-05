@@ -19,6 +19,8 @@ class GVTResolver extends Module{
   val compute = RegInit(false.B)
   val core_min = RegInit(0.U(Specs.time_bits.W))
   val queue_min = RegInit(0.U(Specs.time_bits.W))
+  val last_vld_queue_min = RegInit(0.U(Specs.time_bits.W))
+  when(io.queue_min.valid){last_vld_queue_min := io.queue_min.bits}
 
   val min_res = Module(new MinResolverScan)
   min_res.io.core_times.zip(io.last_processed_ts).foreach{case(m, c) => m := c}
@@ -31,7 +33,7 @@ class GVTResolver extends Module{
       when(io.compute){
         state := sCOMPUTE
         r_ts.zip(io.last_processed_ts).foreach{case(r,c) => r := c}
-        queue_min := Mux(io.queue_min.valid, io.queue_min.bits, (~0.U(Specs.time_bits.W)).asUInt())
+        queue_min := last_vld_queue_min
         compute := true.B
         gvt_valid := false.B
       }
