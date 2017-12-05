@@ -99,7 +99,7 @@ protected class MinResolverScan extends Module {
     }
     is(sSCAN){
       counter := counter + 1.U
-      when(counter === elem_per_seg.U){
+      when(counter === (elem_per_seg-1).U){
         state := sREDUCE
       }
     }
