@@ -29,6 +29,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     // TODO: Event history
     val hist_req = Decoupled(new EventHistoryReq(lp_bits, time_bits))
     val hist_rsp = Flipped(Valid(new EventHistoryRsp(lp_bits, time_bits)))
+
+    val dbg = new Bundle{
+      val core_gvt = Output(UInt(Specs.time_bits.W))
+    }
   })
 
   /* State Machine */
@@ -43,6 +47,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 //  val event_requested = RegInit(false.B)
 
   io.req_evt.valid := false.B
+  val r_last_processed_ts = RegInit(0.U(Specs.time_bits.W))
+  io.last_proc_ts := r_last_processed_ts
 
   def IDLE_task = {
 //    when(!event_requested) {
@@ -63,6 +69,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       event_valid := true.B
       gvt := io.gvt
       state := sSTALL
+      r_last_processed_ts := io.issued_evt.bits.time
 //      event_requested := false.B // Clear flag for next iteration
     }
   }
@@ -242,7 +249,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         //TODO: This may be source of future bug since we're not checking ready for filt_queue
 
         when(evt_out_q.io.enq.fire) {
-          printf("** EP %d # Generate event for LP: %d at time: %d\n", core_id.U, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
+          printf("** EP %d (LP %d)# Generate event for LP: %d at time: %d\n", core_id.U, event_data.lp_id, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
           state := sHIST_WR
         }
       }
@@ -315,8 +322,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       when(io.finished.fire()) {
         state := sIDLE
         printf("** EP %d # Wrapping up\n", core_id.U)
+        reinitialize_task
       }
-      reinitialize_task
     }
   }
 
@@ -329,11 +336,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     hist_wr_success_cnt := 0.U
   }
 
-  val r_last_processed_ts = RegInit(0.U(Specs.time_bits.W))
-  when(state === sFINALISE){
-    r_last_processed_ts := event_data.time
-  }
-  io.last_proc_ts := r_last_processed_ts
+
 
 
   switch(state) {
@@ -381,6 +384,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     }
   }
 
+  // Debug
+  io.dbg.core_gvt := gvt
 
 }
 
