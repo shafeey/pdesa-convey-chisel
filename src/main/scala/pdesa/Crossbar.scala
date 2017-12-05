@@ -9,11 +9,11 @@ import chisel3.util._
   * @param dtype data type
   * @param n_si number of slave interfaces
   */
-class CrossbarEntry[T <: Data](dtype: T, n_si: Int) extends Bundle{
+class CrossbarBundle[T <: Data](dtype: T, n_si: Int) extends Bundle{
   val addr = Output(UInt(log2Ceil(n_si).W))
   val data = Output(dtype)
 
-  override def cloneType: CrossbarEntry.this.type = new CrossbarEntry(dtype, n_si).asInstanceOf[this.type]
+  override def cloneType: CrossbarBundle.this.type = new CrossbarBundle(dtype, n_si).asInstanceOf[this.type]
 }
 
 /** IO bundle definition for the Crossbar module.
@@ -24,8 +24,15 @@ class CrossbarEntry[T <: Data](dtype: T, n_si: Int) extends Bundle{
   * @param n_si number of slave interfaces
   */
 class CrossbarIO[T <: Data](dtype: T, n_mi: Int, n_si: Int) extends Bundle {
-  val mi = Flipped(Vec(n_mi, Decoupled(new CrossbarEntry(dtype, n_si))))
+  val mi = Flipped(Vec(n_mi, Decoupled(new CrossbarBundle(dtype, n_si))))
   val si = Vec(n_si, Decoupled(dtype))
+
+  def insert(i: Int, addr: UInt, data_in: DecoupledIO[T]): Unit = {
+    data_in.ready := mi(i).ready
+    mi(i).valid := data_in.valid
+    mi(i).bits.data := data_in.bits
+    mi(i).bits.addr := Reverse(Reverse(addr)(log2Ceil(n_si)-1, 0))
+  }
 }
 
 /** Hardware module to direct data to target slave node. Provides unidirectional data transfer.
