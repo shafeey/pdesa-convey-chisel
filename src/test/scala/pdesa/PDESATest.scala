@@ -7,8 +7,8 @@ import org.scalatest.{FreeSpec, Matchers}
 import scala.collection.mutable
 
 class PDESATester(c: PDESA) extends PeekPokeTester(c){
-  val max_cycle = 600000
-  val target_gvt = 10000
+  val max_cycle = 60000
+  val target_gvt = 500
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {
@@ -80,10 +80,9 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
   /* replicate event initialization */
   for(cnt <- 0 until (Specs.num_events/Specs.num_queues)){
     for(q<- 0 until Specs.num_queues){
-      pq(q)+= Event(q*Specs.num_lp/Specs.num_queues + cnt, cnt, 0)
+      pq(q)+= Event(q*(Specs.num_lp/Specs.num_queues) + cnt % (Specs.num_lp/Specs.num_queues), cnt, 0)
     }
   }
-  println(s"${pq(0)}")
 
   val rollback_q = mutable.Seq.fill(Specs.num_cores)(mutable.ArrayBuffer.empty[Int])
   val event_q = mutable.Seq.fill(Specs.num_lp)(mutable.ArrayBuffer.empty[Int])
@@ -97,6 +96,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
       val issue = peekIssue(q)
       if (issue.valid) {
         val issued_event = Event(issue.lp, issue.time, issue.cancel)
+        println(s"$issue")
         assert(pq(q).nonEmpty, s"Deque from empty queue $q")
         expect(pq(q).head.time == issue.time, s"Issued non-smallest event $issued_event from queue $q -- Actual ${pq(q).head}")
         expect(pq(q).exists(_ == issued_event), "No matching event in queue")

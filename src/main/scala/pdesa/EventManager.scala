@@ -137,7 +137,8 @@ class InitializationHelper(num_events: Int) extends Module {
     val event = Vec(Specs.num_queues, Decoupled(new EventDispatchBundle))
     val req = Vec(Specs.num_queues, Decoupled(UInt(Specs.core_bits.W)))
   })
-  val evt_cnt = RegInit(0.U(log2Ceil(num_events/Specs.num_queues).W))
+  val evt_cnt_size = math.max(Specs.lp_bits, log2Ceil(num_events))
+  val evt_cnt = RegInit(0.U(evt_cnt_size.W))
   val req_cnt = RegInit(0.U(Specs.core_bits.W))
 
   val sIDLE :: sEVENT :: sREQ :: sEND :: Nil = Enum(4)
@@ -160,7 +161,7 @@ class InitializationHelper(num_events: Int) extends Module {
         evt_cnt := evt_cnt + 1.U
         for (q <- 0 until Specs.num_queues) {
           io.event(q).valid := true.B
-          io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(log2Ceil(Specs.num_lp/Specs.num_queues)-1, 0) ),
+          io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(Specs.lp_bits - log2Ceil(Specs.num_queues) -1, 0)),
             time = evt_cnt, cancel = false.B)
         }
         when(evt_cnt === (num_events/Specs.num_queues - 1).U) {
