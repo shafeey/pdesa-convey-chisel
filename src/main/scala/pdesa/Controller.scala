@@ -224,19 +224,25 @@ class Controller extends Module {
   }
 
   // Each of these queues holds a request for event from a core
-  val issue_reqs: Seq[DecoupledIO[CoreFinishedSignal]] = stall_manager.io.finished_passthru.map(m =>
-    Queue(m, entries = 4, flow = true))
-  val tickets: Seq[UInt] = for(i <- 0 until Specs.num_core_grp) yield LFSR(seed = 0x35CD ^ i)
-  val req_xbar = Module(new Crossbar(new CoreFinishedSignal, Specs.num_queues, Specs.num_queues))
+  val issue_reqs: Seq[DecoupledIO[UInt]] = stall_manager.io.finished_passthru.map{ m =>
+    val w = Wire(new DecoupledIO(io.evt_req.head.bits.cloneType))
+    w.valid := m.valid
+    w.bits := m.bits.core_id
+    m.ready := w.ready
+    Queue(w, entries = 4, flow = false)
+  }
 
-  // Each finished signal gets a ticket for a random queue
+  // Each event queue has a token to serve one of the request queues. Tokens rotate on each cycle.
+  val tokens: Seq[UInt] = for(i <- 0 until Specs.num_queues) yield RegInit((1 << i).U(Specs.num_queues.W))
+  tokens.head := tokens.last
+  for(t<- 1 until Specs.num_queues){tokens(t) := tokens(t-1)}
+
+//  val muxes = for(i <- 0 until Specs.num_queues) yield {Mux1H(tokens(i), issue_reqs.map(_.bits))}
   for(i<- 0 until Specs.num_queues){
-    req_xbar.io.insert(i, tickets(i)(log2Ceil(Specs.num_queues)-1, 0), issue_reqs(i))
-
     // X3 - Create event request
-    io.evt_req(i).valid := req_xbar.io.si(i).valid
-    io.evt_req(i).bits := req_xbar.io.si(i).bits.core_id
-    req_xbar.io.si(i).ready := io.evt_req(i).ready
+    io.evt_req(i).valid := Mux1H(tokens(i), issue_reqs.map(_.valid))
+    io.evt_req(i).bits := Mux1H(tokens(i), issue_reqs.map(_.bits))
+    issue_reqs(i).ready := tokens.map(_(i)).zip(io.evt_req.map(_.ready)).map(x => x._1 & x._2).reduce(_ | _)
     when(io.evt_req(i).fire()){
       printf("~~~~ Requesting new event for EP: %d\n", io.evt_req(i).bits)
     }
