@@ -7,8 +7,8 @@ import org.scalatest.{FreeSpec, Matchers}
 import scala.collection.mutable
 
 class PDESATester(c: PDESA) extends PeekPokeTester(c){
-  val max_cycle = 2000
-  val target_gvt = 25
+  val max_cycle = 1500
+  val target_gvt = 1000
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {
@@ -55,12 +55,13 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
     )
   }
 
-  case class FinishPacket(valid: Boolean, coreid: Int, lp: Int, gvt: Int)
+  case class FinishPacket(valid: Boolean, coreid: Int, lp: Int, hist_size: Int,  gvt: Int)
   def peekFinish(i: Int) = {
     FinishPacket(
       peek(c.io.dbg.finish(i).valid) != BigInt(0),
       peek(c.io.dbg.finish(i).bits.core_id).toInt,
       peek(c.io.dbg.finish(i).bits.last_lp).toInt,
+      peek(c.io.dbg.finish(i).bits.hist_size).toInt,
       peek(c.io.dbg.gvt).toInt
     )
   }
@@ -73,7 +74,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
   case class Event(lp: Int, time: Int, cancel: Int)
   val core_event = mutable.Seq.fill(Specs.num_cores)(Event(0, -1, 0))
   val core_started = mutable.Seq.fill(Specs.num_cores)(-1)
-  var gvt = 0
+  var core_gvt = mutable.Seq.fill(Specs.num_cores)(-1)
 
   val pq = Seq.fill(Specs.num_queues)(mutable.PriorityQueue.empty[Event](Ordering.by(x => -x.time)))
   /* replicate event initialization */
@@ -89,11 +90,14 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
   val cancel_q = mutable.Seq.fill(Specs.num_lp)(mutable.ArrayBuffer.empty[Int])
 
   var cycle = 1
+  var gvt = BigInt(0)
+
   while(cycle < max_cycle && peek(c.io.done.valid) == BigInt(0)){
     (0 until Specs.num_queues).foreach { q =>
       val issue = peekIssue(q)
       if (issue.valid) {
         val issued_event = Event(issue.lp, issue.time, issue.cancel)
+        if(issue.cancel > 0) println(s"Antimessage at EP ${issue.coreid}(LP ${issue.lp}--${issue.time})")
         assert(pq(q).nonEmpty, s"Deque from empty queue $q")
         expect(pq(q).head.time == issue.time, s"Issued non-smallest event $issued_event from queue $q -- Actual ${pq(q).head}")
         expect(pq(q).exists(_ == issued_event), "No matching event in queue")
@@ -114,7 +118,8 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
         core_event(issue.coreid) = Event(issue.lp, issue.time, issue.cancel)
 
         expect(issue.gvt <= issue.time, "GVT bigger than event time")
-        gvt = issue.gvt
+//        core_gvt(issue.coreid) = issue.gvt
+//        println(s"EP: ${issue.coreid} <-- issue-gvt - ${core_gvt(issue.coreid)}")
       }
     }
 
@@ -128,7 +133,8 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
         core_started(start.coreid) = this_evt.lp
 
         /* Discard events past GVT */
-        event_q(this_evt.lp) = event_q(this_evt.lp).filter(_ >= gvt)
+        event_q(this_evt.lp) = event_q(this_evt.lp).filter(_ >= peek(c.io.dbg.core_gvt(start.coreid)))
+//        println(s"EP: ${start.coreid} <-- gvt - ${core_gvt(start.coreid)}")
         if (this_evt.cancel > 0) { // anti-message
           /* check for anti-msg target in the event queue */
           if (event_q(this_evt.lp).contains(this_evt.time)) {
@@ -146,9 +152,11 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
           if (cancel_q(this_evt.lp).contains(this_evt.time)) {
             /* event has a cancellation message waiting, don't insert into processed list
              * remove cancellation message from cancellation list */
+            println(s"EP ${start.coreid}(LP ${this_evt.lp}): waiting antimessage found")
             cancel_q(this_evt.lp) -= this_evt.time
           } else {
             event_q(this_evt.lp) += this_evt.time // Insert to processed events list
+            println(s"EP ${start.coreid}(LP ${this_evt.lp}): ${event_q(this_evt.lp)}")
           }
         }
       }
@@ -176,18 +184,27 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
     (0 until Specs.num_cores).foreach { cid =>
       val fin = peekFinish(cid)
       if (fin.valid) {
+//        println(s"$fin")
+//        println(s"${event_q(fin.lp)}")
         /* All rollback events in the list should have been sent already */
         expect(rollback_q(cid).isEmpty, s"Events remains for rollback when core returns")
+        expect(event_q(fin.lp).size + cancel_q(fin.lp).size == fin.hist_size,
+          s"Number of events written back ${fin.hist_size}, expected: ${event_q(fin.lp).size + cancel_q(fin.lp).size}" +
+            s" in core ${fin.coreid}(${fin.lp})")
         core_event(cid) = Event(-1, -1, -1) // Mark core inactive
         core_started(cid) = -1
       }
     }
+
+    expect(peek(c.io.dbg.gvt) >= gvt, "GVT not monotonic")
+    gvt = peek(c.io.dbg.gvt)
 
     step(1)
     cycle = cycle + 1
   }
   if(peek(c.io.done.bits) >= target_gvt) println("+++ Simulation reached target GVT +++")
   if(cycle > max_cycle) println("+++ Simulation ended due to reaching maximum number of cycles +++")
+  step(1)
 }
 
 
