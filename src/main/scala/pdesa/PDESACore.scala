@@ -18,6 +18,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     val req_evt = Valid(Bool())
     val finished = Decoupled(new CoreFinishedSignal)
 
+    val run = Input(Bool())
+    val processing = Output(Bool())
+
     // GVT update
     val last_proc_ts = Output(UInt(time_bits.W))
     val gvt = Input(UInt(time_bits.W))
@@ -37,8 +40,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   /* State Machine */
   val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sWAIT :: sRESTART :: sNil = Enum(13)
-
   val state = RegInit(sIDLE)
+  io.processing := (state === sIDLE ) || (state === sSTALL)
 
   // IDLE state task processing
   val event_data = Reg(io.issued_evt.bits.cloneType)
@@ -83,7 +86,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   }
 
   def STALL_task = {
-    when(!stalled) {
+    when(!stalled && io.run) {
       printf("** EP %d # Start execution - time: %d, LP: %d\n", core_id.U, event_data.time, event_data.lp_id)
       state := sHIST_RD
     }
@@ -173,7 +176,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   }
 
   // Processing delay
-  val delay_counter = RegInit(31.U.cloneType, init = 0.U)
+  val delay_counter = RegInit(255.U.cloneType, init = 0.U)
 
   when(state === sIDLE) {
     delay_counter := 0.U
@@ -181,7 +184,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   def PROC_DELAY_task = {
     delay_counter := delay_counter + 1.U
-    when(delay_counter === 10.U) {
+    when(delay_counter === 100.U) {
       state := sGEN_EVT
     }
   }

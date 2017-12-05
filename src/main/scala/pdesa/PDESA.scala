@@ -23,22 +23,20 @@ import chisel3.util._
 //  def core_bits = log2Ceil(num_cores)
 //}
 object Specs {
-  val num_cores = 4
-  val num_lp = 16
-  val num_events = 16
+  val num_cores = 64
+  val num_lp = 256
+  val num_events = 128
   val time_bits = 16
 
-  val num_core_grp = 2
-  val num_queues = 2
+  val num_core_grp = 8
+  val num_queues = 4
   val queue_size = 255
 
-  val hist_size = 16
-
-  val sim_end_time = 1000
+  val hist_size = 32
 
   def lp_bits = log2Ceil(num_lp)
-
   def core_bits = log2Ceil(num_cores)
+  def num_cores_per_grp = num_cores/num_core_grp
 }
 
 class PDESA extends Module {
@@ -100,7 +98,7 @@ class PDESA extends Module {
     ack_xbar.io.si(i).ready := true.B // Convert DecoupledIO to ValidIO
   }
   for (i <- 0 until Specs.num_cores) {
-    cores(i).io.dispatch_ack := ackFilter(i, ack_xbar.io.si(i/Specs.num_core_grp))
+    cores(i).io.dispatch_ack := ackFilter(i, ack_xbar.io.si(i / Specs.num_cores_per_grp))
   }
 
   /* Deliver event from event queue to cores through a crossbar and then broadcast */
@@ -124,7 +122,7 @@ class PDESA extends Module {
     issue_xbar.io.si(i).ready := true.B // Convert DecoupledIO to ValidIO
   }
   for (i <- 0 until Specs.num_cores) {
-    cores(i).io.issued_evt := evtIssueFilter(i, issue_xbar.io.si(i/Specs.num_core_grp))
+    cores(i).io.issued_evt := evtIssueFilter(i, issue_xbar.io.si(i / Specs.num_cores_per_grp))
   }
 
   /* Controller snoops in the events issued to the cores */
@@ -152,7 +150,7 @@ class PDESA extends Module {
   }
   start_xbar.io.si.foreach(_.ready := true.B)// Convert DecoupledIO to ValidIO
   for (i <- 0 until Specs.num_cores) {
-    val destall = startFilter(i, start_xbar.io.si(i/Specs.num_core_grp))
+    val destall = startFilter(i, start_xbar.io.si(i / Specs.num_cores_per_grp))
 //    val g_start_msg = Wire(new StartMsg)
 //    g_start_msg.hist_size := 0.U
 //    cores(i).io.start.bits := Mux(global_start, g_start_msg, destall.bits)
@@ -244,11 +242,15 @@ class PDESA extends Module {
       }
     }
     is(sEND){
-      state := sIDLE
-      printf(">>> Reached end of simulation <<<\n")
-      io.done.valid := true.B
+      when(!Cat(cores.map(_.io.processing)).orR()) {
+        state := sIDLE
+        printf(">>> Reached end of simulation <<<\n")
+        io.done.valid := true.B
+      }
     }
   }
+
+  cores.foreach(_.io.run := state === sRUNNING)
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
