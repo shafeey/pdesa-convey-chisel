@@ -51,11 +51,13 @@ class PDESA extends Module {
   })
 
 //  val global_start = RegInit(init = false.B)
+  val gvt = RegInit(0.U(Specs.time_bits.W))
 
   // Instantiate cores
   val cores = for (i <- 0 until Specs.num_cores) yield {
     Module(new PDESACore(i, Specs.lp_bits, Specs.time_bits))
   }
+  cores.foreach(_.io.gvt := gvt)
 
   val gen_xbar = Module(new Crossbar(new EventDispatchBundle, Specs.num_core_grp, Specs.num_queues))
   val gen_arbs = for (i <- 0 until Specs.num_core_grp) yield {
@@ -196,11 +198,17 @@ class PDESA extends Module {
   for(i <- 0 until Specs.num_cores){cores(i).io.hist_rsp <> histFilter(i, evt_hist_mgr.io.hist_rsp)}
 
   /* GVT updates */
+  val queue_min_window = RegInit(Vec(Seq.fill(4)(0.U(Specs.time_bits.W))))
+  queue_min_window.head := Mux(evt_mgr.io.queue_min.valid, evt_mgr.io.queue_min.bits, ~(0.U(Specs.time_bits.W)))
+  for(i<- 1 until 4){ queue_min_window(i) := queue_min_window(i-1) }
+  val queue_min = queue_min_window.reduce((a,b) => Mux(a < b, a, b))
+
   val gvt_resolver = Module(new GVTResolver)
-  gvt_resolver.io.queue_min <> evt_mgr.io.queue_min
+  gvt_resolver.io.queue_min.bits := queue_min
+  gvt_resolver.io.queue_min.valid := true.B
+
   gvt_resolver.io.last_processed_ts.zip(cores).foreach{case(t, c) => t := c.io.last_proc_ts}
 
-  val gvt = RegInit(0.U(Specs.time_bits.W))
   when(gvt_resolver.io.gvt.valid){gvt := gvt_resolver.io.gvt.bits}
 
   /* Control states */
@@ -231,7 +239,7 @@ class PDESA extends Module {
     }
     is(sRUNNING){
 //      global_start := false.B
-      when(gvt > Specs.sim_end_time.U){
+      when(gvt > io.target_gvt){
         state := sEND
       }
     }
@@ -261,6 +269,7 @@ class PDESA extends Module {
   io.dbg.gen.zip(cores.map(_.io.generated_evt)).foreach(w => w._1 := makeDbgIO(w._2))
   io.dbg.finish.zip(cores.map(_.io.finished)).foreach(w => w._1 := makeDbgIO(w._2))
   io.dbg.gvt := gvt
+  io.dbg.core_gvt.zip(cores.map(_.io.dbg.core_gvt)).foreach(x => x._1 := x._2)
 }
 
 class DebugSignalBundle extends Bundle{
@@ -270,6 +279,7 @@ class DebugSignalBundle extends Bundle{
   val gen = Vec(Specs.num_cores, Valid(new EventDispatchBundle))
   val finish = Vec(Specs.num_cores, Valid(new CoreFinishedSignal))
   val gvt = Output(UInt(Specs.time_bits.W))
+  val core_gvt = Output(Vec(Specs.num_cores, UInt(Specs.time_bits.W)))
 }
 
 object PDESA extends App {
