@@ -232,24 +232,33 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         }
         /* If cancellation not needed, no new event shall be generated */
       }.otherwise {
-        /* Generate a regular new event randomly */
-        val gen_evt_time = event_data.time + rand_offset(4, 0) + 10.U
-        val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
-        val gen_evt_type = false.B
-        evt_out_q.io.enq.bits.time := gen_evt_time
-        evt_out_q.io.enq.bits.lp_id := gen_evt_lp
-        evt_out_q.io.enq.bits.cancel_evt := gen_evt_type
-        evt_out_q.io.enq.valid := true.B
+        when(!event_data.cancel_evt) {
+          /* Generate a regular new event randomly */
+          val gen_evt_time = event_data.time + rand_offset(4, 0) + 10.U
+          val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
+          val gen_evt_type = false.B
+          evt_out_q.io.enq.bits.time := gen_evt_time
+          evt_out_q.io.enq.bits.lp_id := gen_evt_lp
+          evt_out_q.io.enq.bits.cancel_evt := gen_evt_type
+          evt_out_q.io.enq.valid := true.B
 
-        filt_enq.bits.origin_time := event_data.time
-        filt_enq.bits.target_time := gen_evt_time
-        filt_enq.bits.target_lp := gen_evt_lp
-        filt_enq.bits.cancel_evt := gen_evt_type
-        filt_enq.valid := true.B
-        //TODO: This may be source of future bug since we're not checking ready for filt_queue
+          filt_enq.bits.origin_time := event_data.time
+          filt_enq.bits.target_time := gen_evt_time
+          filt_enq.bits.target_lp := gen_evt_lp
+          filt_enq.bits.cancel_evt := gen_evt_type
+          filt_enq.valid := true.B
+          //TODO: This may be source of future bug since we're not checking ready for filt_queue
 
-        when(evt_out_q.io.enq.fire) {
-          printf("** EP %d (LP %d)# Generate event for LP: %d at time: %d\n", core_id.U, event_data.lp_id, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
+          when(evt_out_q.io.enq.fire) {
+            printf("** EP %d (LP %d)# Generate event for LP: %d at time: %d\n", core_id.U, event_data.lp_id, evt_out_q.io.enq.bits.lp_id, evt_out_q.io.enq.bits.time)
+            state := sHIST_WR
+          }
+        }.otherwise{ // The cancel events will pushed to history where it waits for matching event to arrive
+          filt_enq.bits.origin_time := event_data.time
+          filt_enq.bits.target_lp := event_data.lp_id
+          filt_enq.bits.cancel_evt := true.B
+          filt_enq.valid := true.B
+          printf("** EP %d (LP %d)# Pushed cancel event at time: %d\n", core_id.U, event_data.lp_id, event_data.time)
           state := sHIST_WR
         }
       }

@@ -7,8 +7,8 @@ import org.scalatest.{FreeSpec, Matchers}
 import scala.collection.mutable
 
 class PDESATester(c: PDESA) extends PeekPokeTester(c){
-  val max_cycle = 1500
-  val target_gvt = 1000
+  val max_cycle = 600000
+  val target_gvt = 10000
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {
@@ -97,7 +97,6 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
       val issue = peekIssue(q)
       if (issue.valid) {
         val issued_event = Event(issue.lp, issue.time, issue.cancel)
-        if(issue.cancel > 0) println(s"Antimessage at EP ${issue.coreid}(LP ${issue.lp}--${issue.time})")
         assert(pq(q).nonEmpty, s"Deque from empty queue $q")
         expect(pq(q).head.time == issue.time, s"Issued non-smallest event $issued_event from queue $q -- Actual ${pq(q).head}")
         expect(pq(q).exists(_ == issued_event), "No matching event in queue")
@@ -118,8 +117,6 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
         core_event(issue.coreid) = Event(issue.lp, issue.time, issue.cancel)
 
         expect(issue.gvt <= issue.time, "GVT bigger than event time")
-//        core_gvt(issue.coreid) = issue.gvt
-//        println(s"EP: ${issue.coreid} <-- issue-gvt - ${core_gvt(issue.coreid)}")
       }
     }
 
@@ -134,7 +131,6 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
 
         /* Discard events past GVT */
         event_q(this_evt.lp) = event_q(this_evt.lp).filter(_ >= peek(c.io.dbg.core_gvt(start.coreid)))
-//        println(s"EP: ${start.coreid} <-- gvt - ${core_gvt(start.coreid)}")
         if (this_evt.cancel > 0) { // anti-message
           /* check for anti-msg target in the event queue */
           if (event_q(this_evt.lp).contains(this_evt.time)) {
@@ -144,6 +140,8 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
             /* keep a record of unmatched anti-messages */
             cancel_q(this_evt.lp) += this_evt.time
           }
+          event_q(this_evt.lp) = event_q(this_evt.lp).filterNot(_ > this_evt.time)
+          rollback_q(start.coreid) = event_q(this_evt.lp).filter(_ > this_evt.time)
         } else { // Regular event
           /* keep track of events that should later be rolled back, prune event_list */
           rollback_q(start.coreid) = event_q(this_evt.lp).filter(_ > this_evt.time)
@@ -156,7 +154,6 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
             cancel_q(this_evt.lp) -= this_evt.time
           } else {
             event_q(this_evt.lp) += this_evt.time // Insert to processed events list
-            println(s"EP ${start.coreid}(LP ${this_evt.lp}): ${event_q(this_evt.lp)}")
           }
         }
       }
@@ -184,8 +181,6 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
     (0 until Specs.num_cores).foreach { cid =>
       val fin = peekFinish(cid)
       if (fin.valid) {
-//        println(s"$fin")
-//        println(s"${event_q(fin.lp)}")
         /* All rollback events in the list should have been sent already */
         expect(rollback_q(cid).isEmpty, s"Events remains for rollback when core returns")
         expect(event_q(fin.lp).size + cancel_q(fin.lp).size == fin.hist_size,
