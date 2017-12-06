@@ -41,10 +41,6 @@ object Specs {
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)
   def num_cores_per_grp = num_cores/num_core_grp
-
-  val MEM_RD_CMD = 1.U
-  val MEM_WR_CMD = 2.U
-  val MEM_SIZE_BYTE = 0.U
 }
 
 class PDESAIO(numMemPorts: Int, numReg: Int) extends AcceleratorIF(numMemPorts, numReg){
@@ -56,7 +52,7 @@ class PDESAIO(numMemPorts: Int, numReg: Int) extends AcceleratorIF(numMemPorts, 
 
 
 class PDESA extends Accelerator with PlatformParams{
-  override val io = IO(new PDESAIO(numMemPorts, numAEGReg))
+  val io = IO(new PDESAIO(numMemPorts, numAEGReg))
 
 //  val global_start = RegInit(init = false.B)
   val gvt = RegInit(0.U(Specs.time_bits.W))

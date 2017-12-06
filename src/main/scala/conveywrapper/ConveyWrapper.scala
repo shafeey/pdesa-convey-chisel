@@ -18,15 +18,10 @@ trait MemParams{
   val memIDBits: Int = 32
   val memMetaBits: Int = 8
   val sameIDInOrder: Boolean = true
-  //  val csrDataBits: Int = 32 // TODO let platforms configure own CSR width
 
-  //  def toMemReqParams: MemReqParams = {
-  //    new MemReqParams(memAddrBits, memDataBits, memIDBits, memMetaBits, sameIDInOrder)
-  //  }
-
-  //  def typicalMemLatencyCycles: Int
-  //  def burstBeats: Int
-  //  def seqStreamTxns(): Int = { typicalMemLatencyCycles / burstBeats }
+  val MEM_RD_CMD: Int = 1
+  val MEM_WR_CMD: Int = 2
+  val MEM_SIZE_BYTE: Int = 0
 }
 
 class ConveyWrapper(accelerator: () => Accelerator) extends Module with PlatformParams{

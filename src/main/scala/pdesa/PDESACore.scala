@@ -6,7 +6,7 @@ import conveywrapper._
 
 // TODO: Implement logic to account for ack before quitting
 // TODO: Drive last processed timestamp for GVT computation
-class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
+class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with PlatformParams{
   val io = IO(new Bundle {
     // Event exchange conversations
     // TODO: Update test - change of interface
@@ -181,9 +181,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   def MEM_LD_task = {
     val req = Wire(io.memPort.req.bits.cloneType)
     req.addr := req_vaddr
-    req.cmd := Specs.MEM_RD_CMD
+    req.cmd := MEM_RD_CMD.U
     req.rtnCtl := rtnCtl
-    req.size := Specs.MEM_SIZE_BYTE
+    req.size := MEM_SIZE_BYTE.U
 
     io.memPort.req.enq(req)
     when(io.memPort.req.fire()) {
@@ -200,9 +200,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   def MEM_ST_task = {
     val req = Wire(io.memPort.req.bits.cloneType)
     req.addr := req_vaddr
-    req.cmd := Specs.MEM_WR_CMD
+    req.cmd := MEM_WR_CMD.U
     req.rtnCtl := rtnCtl
-    req.size := Specs.MEM_SIZE_BYTE
+    req.size := MEM_SIZE_BYTE.U
     req.writeData := rtnCtl
 
     io.memPort.req.enq(req)

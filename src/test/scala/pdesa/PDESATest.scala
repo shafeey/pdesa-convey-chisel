@@ -82,7 +82,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
     )
     if(m.valid){
       val rsp: (Int, MemRsp) = (cycle + rnd.nextInt(30) + 80, MemRsp(m.rtnctl, mem_mock.getOrElse(m.addr, BigInt(0))))
-      if(m.cmd == Specs.MEM_WR_CMD.toInt) {
+      if(m.cmd == MEM_WR_CMD) {
         mem_mock(m.addr) = m.data
       }
       mem_rsp(i) += rsp
