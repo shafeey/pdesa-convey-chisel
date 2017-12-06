@@ -34,9 +34,16 @@ object Specs {
 
   val hist_size = 32
 
+  val NUM_MEM_BYTE = 1
+  val mem_addr_wid = 32
+
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)
   def num_cores_per_grp = num_cores/num_core_grp
+
+  val MEM_RD_CMD = 1.U
+  val MEM_WR_CMD = 2.U
+  val MEM_SIZE_BYTE = 0.U
 }
 
 class PDESA extends Module {

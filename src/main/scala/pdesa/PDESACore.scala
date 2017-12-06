@@ -2,6 +2,7 @@ package pdesa
 
 import chisel3._
 import chisel3.util._
+import conveywrapper._
 
 // TODO: Implement logic to account for ack before quitting
 // TODO: Drive last processed timestamp for GVT computation
@@ -26,7 +27,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     val gvt = Input(UInt(time_bits.W))
 
     // Memory Access Interface
-    // TODO: Memory Access
+    val addr = Input(UInt(Specs.mem_addr_wid.W))
+//    val memPort = new ConveyMemMasterIF(rtnctlWidth)
+    val memPort = new ConveyMemMasterIF(32)
 
     // Event History interface
     // TODO: Event history
@@ -39,7 +42,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   })
 
   /* State Machine */
-  val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sWAIT :: sRESTART :: sNil = Enum(13)
+  val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sNil = Enum(11)
   val state = RegInit(sIDLE)
   io.processing := (state === sIDLE ) || (state === sSTALL)
 
@@ -169,9 +172,44 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       mem_delay_counter := mem_delay_counter + 1.U
     }
 
+  val rtnCtl = Cat(event_data.time, event_data.lp_id, core_id.U(Specs.core_bits.W))
+  val req_vaddr = io.addr + (event_data.lp_id << log2Ceil(Specs.NUM_MEM_BYTE)).asUInt()
   def MEM_LD_task = {
-    when(mem_delay_counter === 32.U) {
-      state := sGEN_EVT
+    val req = Wire(io.memPort.req.bits.cloneType)
+    req.addr := req_vaddr
+    req.cmd := Specs.MEM_RD_CMD
+    req.rtnCtl := rtnCtl
+    req.size := Specs.MEM_SIZE_BYTE
+
+    io.memPort.req.enq(req)
+    when(io.memPort.req.fire()) {
+      state := sLD_RTN
+    }
+  }
+
+  def LD_RTN_task = {
+    when(io.memPort.rsp.valid && io.memPort.rsp.bits.rtnCtl === rtnCtl){
+      state := sPROC_DELAY
+    }
+  }
+
+  def MEM_ST_task = {
+    val req = Wire(io.memPort.req.bits.cloneType)
+    req.addr := req_vaddr
+    req.cmd := Specs.MEM_WR_CMD
+    req.rtnCtl := rtnCtl
+    req.size := Specs.MEM_SIZE_BYTE
+    req.writeData := rtnCtl
+
+    io.memPort.req.enq(req)
+    when(io.memPort.req.fire()) {
+      state := sST_RTN
+    }
+  }
+
+  def ST_RTN_task = {
+    when(io.memPort.rsp.valid && io.memPort.rsp.bits.rtnCtl === rtnCtl){
+      state := sFINALISE
     }
   }
 
@@ -184,7 +222,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   def PROC_DELAY_task = {
     delay_counter := delay_counter + 1.U
-    when(delay_counter === 100.U) {
+    when(delay_counter === 10.U) {
       state := sGEN_EVT
     }
   }
@@ -312,7 +350,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
         }
       }
     }.otherwise {
-      state := sFINALISE
+      state := sST_MEM
     }
   }
 
@@ -369,6 +407,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       // Go to PROC_DELAY when done
       MEM_LD_task
     }
+    is(sLD_RTN){
+      LD_RTN_task
+    }
     is(sPROC_DELAY) {
       // Insert predefined delay
       // Go to GEN_EVT when done
@@ -384,10 +425,12 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       // Go to ST_MEM
       HIST_WR_task
     }
-    //    is(sST_MEM) {
-    // Write back memory
-    // GO to SEND_EVT
-    //    }
+    is(sST_MEM){
+      MEM_ST_task
+    }
+    is(sST_RTN){
+      ST_RTN_task
+    }
     is(sFINALISE) {
       // SEND out all events
       // SEND evt request when done
