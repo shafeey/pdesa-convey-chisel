@@ -38,13 +38,14 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
     val dbg = new Bundle{
       val core_gvt = Output(UInt(Specs.time_bits.W))
+      val active_lp = Output(UInt((Specs.lp_bits+1).W))
     }
   })
 
   /* State Machine */
   val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sNil = Enum(11)
   val state = RegInit(sIDLE)
-  io.processing := (state === sIDLE ) || (state === sSTALL)
+  io.processing := (state =/= sIDLE ) && (state =/= sSTALL)
 
   // IDLE state task processing
   val event_data = Reg(io.issued_evt.bits.cloneType)
@@ -229,8 +230,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
 
   // Event Generation
-  val rand_lp = LFSR(seed = 71)
-  val rand_offset = LFSR(seed = 33)
+  val rand_lp = LFSR(seed = 15821 ^ core_id)
+  val rand_offset = LFSR(seed = 25879 ^ core_id)
 
   val evt_out_q = Module(new Queue(Wire(new EventMsg(lp_bits, time_bits)), Specs.hist_size))
   evt_out_q.io.enq.noenq()
@@ -275,7 +276,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       }.otherwise {
         when(!event_data.cancel_evt) {
           /* Generate a regular new event randomly */
-          val gen_evt_time = event_data.time + rand_offset(4, 0) + 10.U
+          val gen_evt_time = event_data.time + rand_offset(4, 0) + 20.U
           val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
           val gen_evt_type = false.B
           evt_out_q.io.enq.bits.time := gen_evt_time
@@ -371,7 +372,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
       io.finished.bits.setValue(core_id = core_id.U, lp = event_data.lp_id, hist_size = hist_written)
       when(io.finished.fire()) {
         state := sIDLE
-        printf("** EP %d # Wrapping up\n", core_id.U)
+        printf("** EP %d # Wrapping up: hist size %d\n", core_id.U, hist_written)
         reinitialize_task
       }
     }
@@ -384,6 +385,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
     stalled := true.B
     hist_recv_cnt := 0.U
     hist_wr_success_cnt := 0.U
+    r_last_processed_ts := ~(0.U(Specs.time_bits.W))
   }
 
 
@@ -441,7 +443,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
 
   // Debug
   io.dbg.core_gvt := gvt
-
+  io.dbg.active_lp := Cat((state =/= sIDLE).asUInt(), event_data.lp_id)
 }
 
 object PDESACore extends App {

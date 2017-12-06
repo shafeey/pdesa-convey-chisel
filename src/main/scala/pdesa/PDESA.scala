@@ -25,14 +25,14 @@ import chisel3.util._
 object Specs {
   val num_cores = 64
   val num_lp = 256
-  val num_events = 128
+  val num_events = 256
   val time_bits = 16
 
   val num_core_grp = 8
   val num_queues = 4
   val queue_size = 255
 
-  val hist_size = 32
+  val hist_size = 16
 
   val NUM_MEM_BYTE = 1
   val mem_addr_wid = 32
@@ -214,7 +214,9 @@ class PDESA extends Module {
 
   gvt_resolver.io.last_processed_ts.zip(cores).foreach{case(t, c) => t := c.io.last_proc_ts}
 
-  when(gvt_resolver.io.gvt.valid){gvt := gvt_resolver.io.gvt.bits}
+  when(gvt_resolver.io.gvt.valid){
+    gvt := gvt_resolver.io.gvt.bits
+  }
 
   /* Control states */
   io.done.valid := false.B
@@ -226,6 +228,15 @@ class PDESA extends Module {
   val state = RegInit(sIDLE)
 
   gvt_resolver.io.compute := state === sRUNNING
+
+  val force_sync = RegInit(false.B)
+  controller.io.force_sync := force_sync
+
+  assert(Specs.hist_size >= 8, "History size set too low. Set greater that 8")
+  val hist_afull_size = Specs.hist_size/2 + Specs.hist_size/4
+  val hist_afull = cores.map(_.io.finished)
+    .map(x => Mux(x.fire(), x.bits.hist_size >= hist_afull_size.U, false.B))
+    .reduce(_ | _)
 
   switch(state){
     is(sIDLE){
@@ -246,6 +257,16 @@ class PDESA extends Module {
 //      global_start := false.B
       when(gvt > io.target_gvt){
         state := sEND
+      }
+      when(force_sync){
+        when(!Cat(cores.map(_.io.processing)).orR()){ // All cores stopped processing, sync done
+          /* DEBUG */ printf("Synchronization done\n")
+          force_sync := false.B
+          gvt := queue_min
+        }
+      }.otherwise{ // Force a synchronization when history size is too large
+        force_sync := hist_afull
+        /* DEBUG */ when(!force_sync && hist_afull){printf("Forcing synchronization\n")}
       }
     }
     is(sEND){
@@ -279,6 +300,7 @@ class PDESA extends Module {
   io.dbg.finish.zip(cores.map(_.io.finished)).foreach(w => w._1 := makeDbgIO(w._2))
   io.dbg.gvt := gvt
   io.dbg.core_gvt.zip(cores.map(_.io.dbg.core_gvt)).foreach(x => x._1 := x._2)
+  io.dbg.active_lp.zip(cores.map(_.io.dbg.active_lp)).foreach(x=> x._1 := x._2)
 }
 
 class DebugSignalBundle extends Bundle{
@@ -289,6 +311,7 @@ class DebugSignalBundle extends Bundle{
   val finish = Vec(Specs.num_cores, Valid(new CoreFinishedSignal))
   val gvt = Output(UInt(Specs.time_bits.W))
   val core_gvt = Output(Vec(Specs.num_cores, UInt(Specs.time_bits.W)))
+  val active_lp = Output(Vec(Specs.num_cores, UInt((Specs.lp_bits+1).W)))
 }
 
 object PDESA extends App {
