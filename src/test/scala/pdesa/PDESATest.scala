@@ -80,7 +80,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
   /* replicate event initialization */
   for(cnt <- 0 until (Specs.num_events/Specs.num_queues)){
     for(q<- 0 until Specs.num_queues){
-      pq(q)+= Event(q*(Specs.num_lp/Specs.num_queues) + cnt % (Specs.num_lp/Specs.num_queues), cnt, 0)
+      pq(q)+= Event(q*(Specs.num_lp/Specs.num_queues) + cnt % (Specs.num_lp/Specs.num_queues), time = 0, cancel = 0)
     }
   }
 
@@ -163,6 +163,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
       val enq = peekEnq(q)
       if(enq.valid){ // Update queue with new received events
         pq(q)+= Event(enq.lp, enq.time, enq.cancel)
+        expect(pq(q).size <= Specs.queue_size - 1, s"Queue $q overflowed")
       }
     }
 
@@ -186,6 +187,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
         expect(event_q(fin.lp).size + cancel_q(fin.lp).size == fin.hist_size,
           s"Number of events written back ${fin.hist_size}, expected: ${event_q(fin.lp).size + cancel_q(fin.lp).size}" +
             s" in core ${fin.coreid}(${fin.lp})")
+        expect(fin.hist_size <= Specs.hist_size/2 + 1, "History overflow possibility")
         core_event(cid) = Event(-1, -1, -1) // Mark core inactive
         core_started(cid) = -1
       }

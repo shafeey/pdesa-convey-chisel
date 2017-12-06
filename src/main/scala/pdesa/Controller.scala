@@ -188,8 +188,7 @@ class ControllerIO extends Bundle {
   val finished = Flipped(Vec(Specs.num_queues, Decoupled(new CoreFinishedSignal)))
   val start_sig = Vec(Specs.num_queues, Decoupled(new StartMsg))
 
-  val queue_min = Flipped(Vec(Specs.num_queues, Valid(UInt(Specs.time_bits.W))))
-  val gvt = Output(UInt(Specs.time_bits.W))
+  val force_sync = Input(Bool())
 }
 
 class Controller extends Module {
@@ -229,7 +228,7 @@ class Controller extends Module {
     w.valid := m.valid
     w.bits := m.bits.core_id
     m.ready := w.ready
-    Queue(w, entries = 4, flow = false)
+    Queue(w, entries = Specs.num_cores, flow = false)
   }
 
   // Each event queue has a token to serve one of the request queues. Tokens rotate on each cycle.
@@ -240,9 +239,9 @@ class Controller extends Module {
 //  val muxes = for(i <- 0 until Specs.num_queues) yield {Mux1H(tokens(i), issue_reqs.map(_.bits))}
   for(i<- 0 until Specs.num_queues){
     // X3 - Create event request
-    io.evt_req(i).valid := Mux1H(tokens(i), issue_reqs.map(_.valid))
+    io.evt_req(i).valid := Mux1H(tokens(i), issue_reqs.map(_.valid)) && !io.force_sync
     io.evt_req(i).bits := Mux1H(tokens(i), issue_reqs.map(_.bits))
-    issue_reqs(i).ready := tokens.map(_(i)).zip(io.evt_req.map(_.ready)).map(x => x._1 & x._2).reduce(_ | _)
+    issue_reqs(i).ready := tokens.map(_(i)).zip(io.evt_req.map(_.ready)).map(x => x._1 & x._2).reduce(_ | _) && !io.force_sync
     when(io.evt_req(i).fire()){
       printf("~~~~ Requesting new event for EP: %d\n", io.evt_req(i).bits)
     }

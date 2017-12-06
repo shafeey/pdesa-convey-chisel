@@ -162,7 +162,7 @@ class InitializationHelper(num_events: Int) extends Module {
         for (q <- 0 until Specs.num_queues) {
           io.event(q).valid := true.B
           io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(Specs.lp_bits - log2Ceil(Specs.num_queues) -1, 0)),
-            time = evt_cnt, cancel = false.B)
+            time = 0.U, cancel = false.B)
         }
         when(evt_cnt === (num_events/Specs.num_queues - 1).U) {
           state := sREQ
