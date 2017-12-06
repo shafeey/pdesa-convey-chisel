@@ -2,6 +2,7 @@ package pdesa
 
 import chisel3._
 import chisel3.util._
+import conveywrapper._
 
 //noinspection ScalaStyle
 //object Specs {
@@ -23,9 +24,9 @@ import chisel3.util._
 //  def core_bits = log2Ceil(num_cores)
 //}
 object Specs {
-  val num_cores = 64
-  val num_lp = 256
-  val num_events = 256
+  val num_cores = 16
+  val num_lp = 64
+  val num_events = 64
   val time_bits = 16
 
   val num_core_grp = 8
@@ -46,14 +47,16 @@ object Specs {
   val MEM_SIZE_BYTE = 0.U
 }
 
-class PDESA extends Module {
-  val io = IO(new Bundle {
-    val start = Input(Bool())
-    val target_gvt = Input(UInt(Specs.time_bits.W))
-    val done = Valid(UInt(Specs.time_bits.W))
+class PDESAIO(numMemPorts: Int, numReg: Int) extends AcceleratorIF(numMemPorts, numReg){
+  val target_gvt = Input(UInt(Specs.time_bits.W))
+  val done = Valid(UInt(Specs.time_bits.W))
 
-    val dbg: DebugSignalBundle = new DebugSignalBundle
-  })
+  val dbg: DebugSignalBundle = new DebugSignalBundle
+}
+
+
+class PDESA extends Accelerator with PlatformParams{
+  override val io = IO(new PDESAIO(numMemPorts, numAEGReg))
 
 //  val global_start = RegInit(init = false.B)
   val gvt = RegInit(0.U(Specs.time_bits.W))
@@ -279,6 +282,30 @@ class PDESA extends Module {
   }
 
   cores.foreach(_.io.run := state === sRUNNING)
+
+  /* Mem port connection */
+  assert(Specs.num_cores >= 2 * numMemPorts, "No arbiter necessary for the number of cores specified")
+  var num_cores_to_memports = Specs.num_cores / Specs.num_core_grp
+  val mem_arbs = for (i <- 0 until numMemPorts) yield {
+    Module(new RRArbiter(io.memPort.head.req.bits.cloneType, num_cores_to_memports))
+  }
+
+  for (i <- 0 until numMemPorts) {
+    for (j <- 0 until num_cores_to_memports){
+      // cores to arbiters
+      cores(i * num_cores_to_memports + j).io.memPort.req <> mem_arbs(i).io.in(j)
+      cores(i * num_cores_to_memports + j).io.memPort.rsp.valid := io.memPort(i).rsp.valid
+      cores(i * num_cores_to_memports + j).io.memPort.rsp.bits := io.memPort(i).rsp.bits
+    }
+    io.memPort(i).req <> mem_arbs(i).io.out
+    io.memPort(i).rsp.ready := true.B
+    io.memPort(i).flushReq := false.B
+  }
+
+
+
+
+
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {

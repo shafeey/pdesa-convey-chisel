@@ -169,9 +169,12 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module {
   when(state === sIDLE) {
     mem_delay_counter := 0.U
   }
-    .elsewhen(state === sLD_MEM) {
-      mem_delay_counter := mem_delay_counter + 1.U
-    }
+  .elsewhen(state === sLD_MEM) {
+    mem_delay_counter := mem_delay_counter + 1.U
+  }
+
+  io.memPort.req.noenq()
+  io.memPort.req.bits.driveDefaults()
 
   val rtnCtl = Cat(event_data.time, event_data.lp_id, core_id.U(Specs.core_bits.W))
   val req_vaddr = io.addr + (event_data.lp_id << log2Ceil(Specs.NUM_MEM_BYTE)).asUInt()

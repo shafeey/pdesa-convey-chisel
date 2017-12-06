@@ -2,11 +2,13 @@ package pdesa
 
 import chisel3._
 import chisel3.iotesters._
+import conveywrapper.PlatformParams
 import org.scalatest.{FreeSpec, Matchers}
 
 import scala.collection.mutable
+import scala.util.Random
 
-class PDESATester(c: PDESA) extends PeekPokeTester(c){
+class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
   val max_cycle = 60000
   val target_gvt = 500
 
@@ -64,6 +66,40 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
       peek(c.io.dbg.finish(i).bits.hist_size).toInt,
       peek(c.io.dbg.gvt).toInt
     )
+  }
+
+  case class MemPacket(valid: Boolean, rtnctl: Int, cmd: Int, addr: BigInt, data: BigInt)
+  case class MemRsp(rtnctl: Int, data: BigInt)
+  val mem_mock = mutable.HashMap.empty[BigInt, BigInt]
+  val mem_rsp = Seq.fill(numMemPorts)(mutable.PriorityQueue.empty[(Int, MemRsp)](Ordering.by(x => -x._1)))
+  def serveMemRequest(i: Int) = {
+    val m = MemPacket(
+      peek(c.io.memPort(i).req.valid) > 0,
+      peek(c.io.memPort(i).req.bits.rtnCtl).toInt,
+      peek(c.io.memPort(i).req.bits.cmd).toInt,
+      peek(c.io.memPort(i).req.bits.writeData),
+      peek(c.io.memPort(i).req.bits.writeData)
+    )
+    if(m.valid){
+      val rsp: (Int, MemRsp) = (cycle + rnd.nextInt(30) + 80, MemRsp(m.rtnctl, mem_mock.getOrElse(m.addr, BigInt(0))))
+      if(m.cmd == Specs.MEM_WR_CMD.toInt) {
+        mem_mock(m.addr) = m.data
+      }
+      mem_rsp(i) += rsp
+    }
+    poke(c.io.memPort(i).req.ready, 1)
+  }
+
+  def serveMemResponse(i: Int) = {
+    val ready = peek(c.io.memPort(i).rsp.ready) > 0
+    if(ready && mem_rsp(i).nonEmpty && mem_rsp(i).head._1 <= cycle){
+      val rsp = mem_rsp(i).dequeue()._2
+      poke(c.io.memPort(i).rsp.valid, 1)
+      poke(c.io.memPort(i).rsp.bits.rtnCtl, rsp.rtnctl)
+      poke(c.io.memPort(i).rsp.bits.readData, rsp.data)
+    } else {
+      poke(c.io.memPort(i).rsp.valid, 0)
+    }
   }
 
   poke(c.io.start, 0)
@@ -195,6 +231,11 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c){
 
     expect(peek(c.io.dbg.gvt) >= gvt, "GVT not monotonic")
     gvt = peek(c.io.dbg.gvt)
+
+    for(i<- 0 until numMemPorts){
+      serveMemRequest(i)
+      serveMemResponse(i)
+    }
 
     step(1)
     cycle = cycle + 1
