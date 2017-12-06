@@ -35,6 +35,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     val hist_req = Decoupled(new EventHistoryReq(lp_bits, time_bits))
     val hist_rsp = Flipped(Valid(new EventHistoryRsp(lp_bits, time_bits)))
 
+    val report = new Bundle{
+      val stalled = Output(Bool())
+      val mem = Output(Bool())
+    }
+
     val dbg = new Bundle{
       val core_gvt = Output(UInt(Specs.time_bits.W))
       val active_lp = Output(UInt((Specs.lp_bits+1).W))
@@ -442,6 +447,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
       FINALISE_task
     }
   }
+
+  // Report
+  io.report.stalled := state === sSTALL
+  io.report.mem := (state === sLD_RTN) || (state === sST_RTN)
 
   // Debug
   io.dbg.core_gvt := gvt

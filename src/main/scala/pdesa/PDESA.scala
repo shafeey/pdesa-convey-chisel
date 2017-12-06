@@ -7,7 +7,7 @@ import conveywrapper._
 object Specs {
   val num_cores = 64
   val num_lp = 256
-  val num_events = 256
+  val num_events = 512
   val time_bits = 16
 
   val num_core_grp = 8
@@ -29,8 +29,8 @@ class PDESA extends Module with PlatformParams{
     val target_gvt = Input(UInt(Specs.time_bits.W))
     val addr = Input(UInt(MEM_ADDR_WID.W))
     val memPort = Vec(numMemPorts, new ConveyMemMasterIF(rtnctlWidth))
-
     val done = Valid(UInt(Specs.time_bits.W))
+    val report = new ReportBundle
 
     val dbg: DebugSignalBundle = new DebugSignalBundle
   })
@@ -213,6 +213,8 @@ class PDESA extends Module with PlatformParams{
     .map(x => Mux(x.fire(), x.bits.hist_size >= hist_afull_size.U, false.B))
     .reduce(_ | _)
 
+  val rpt_core_select = Count(state === sEND)
+
   switch(state){
     is(sIDLE){
       when(io.start) {
@@ -245,7 +247,7 @@ class PDESA extends Module with PlatformParams{
       }
     }
     is(sEND){
-      when(!Cat(cores.map(_.io.processing)).orR()) {
+      when(!Cat(cores.map(_.io.processing)).orR() && rpt_core_select === Specs.num_cores.U) {
         state := sIDLE
         printf(">>> Reached end of simulation <<<\n")
         io.done.valid := true.B
@@ -274,6 +276,46 @@ class PDESA extends Module with PlatformParams{
     io.memPort(i).rsp.ready := true.B
     io.memPort(i).flushReq := false.B
   }
+
+  // report back
+
+
+  val tot_cycle = Count(state === sRUNNING)
+  io.report.total_cycles := tot_cycle
+
+  val tot_antimsg = gen_xbar.io.si.map(x => x.fire() && x.bits.msg.cancel_evt).map(Count(_))
+  io.report.total_antimsg := tot_antimsg.reduce(_ + _)
+
+  val tot_event = ret_xbar.io.si.map(x => x.fire()).map(Count(_))
+  io.report.total_events := tot_event.reduce(_ + _)
+
+  val tot_stall = RegInit(0.U(64.W))
+  val stalled_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  for(i <- 0 until Specs.num_cores){
+    when(state === sRUNNING && cores(i).io.report.stalled){stalled_cycles(i) := stalled_cycles(i) + 1.U}
+  }
+  when(state === sEND){
+    tot_stall := tot_stall + stalled_cycles(rpt_core_select(Specs.core_bits-1, 0))
+  }
+  io.report.total_stalls := tot_stall
+
+  val tot_mem = RegInit(0.U(64.W))
+  val mem_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  for(i <- 0 until Specs.num_cores){
+    when(state === sRUNNING && cores(i).io.report.mem){mem_cycles(i) := mem_cycles(i) + 1.U}
+  }
+  when(state === sEND){
+    tot_mem := tot_mem + mem_cycles(rpt_core_select(Specs.core_bits-1, 0))
+  }
+  io.report.total_mem_time := tot_mem
+
+  val rpt_gen_vld = Cat(cores.map(_.io.generated_evt.valid))
+  val q_conf = Count((rpt_gen_vld & (rpt_gen_vld - 1.U)).orR())
+  io.report.total_q_conflict := q_conf
+
+  val rpt_hist_req_vld = Cat(cores.map(_.io.hist_req.valid))
+  val hist_conf = Count((rpt_hist_req_vld & (rpt_hist_req_vld - 1.U)).orR())
+  io.report.total_hist_conflict := hist_conf
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
@@ -307,6 +349,26 @@ class DebugSignalBundle extends Bundle{
   val gvt = Output(UInt(Specs.time_bits.W))
   val core_gvt = Output(Vec(Specs.num_cores, UInt(Specs.time_bits.W)))
   val active_lp = Output(Vec(Specs.num_cores, UInt((Specs.lp_bits+1).W)))
+}
+
+class ReportBundle extends Bundle{
+  val total_cycles = Output(UInt(64.W))
+  val total_events = Output(UInt(64.W))
+  val total_stalls = Output(UInt(64.W))
+  val total_antimsg = Output(UInt(64.W))
+  val total_q_conflict = Output(UInt(64.W))
+  val total_hist_conflict = Output(UInt(64.W))
+  val avg_proc_time = Output(UInt(64.W))
+  val total_mem_time = Output(UInt(64.W))
+  val avg_hist_time = Output(UInt(64.W))
+}
+
+object Count{
+  val count: UInt = RegInit((~0.U(64.W)).asUInt())
+  def apply(inc: Bool): UInt = {
+    when(inc){count := count + 1.U}
+    count
+  }
 }
 
 object PDESA extends App {
