@@ -27,9 +27,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     val gvt = Input(UInt(time_bits.W))
 
     // Memory Access Interface
-    val addr = Input(UInt(Specs.mem_addr_wid.W))
-//    val memPort = new ConveyMemMasterIF(rtnctlWidth)
-    val memPort = new ConveyMemMasterIF(32)
+    val addr = Input(UInt(MEM_ADDR_WID.W))
+    val memPort = new ConveyMemMasterIF(rtnctlWidth)
 
     // Event History interface
     // TODO: Event history

@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Run using software model only
+#runpdksim -nohwsim ./app_sim $*
+
+# Run Verilog simulation
+runpdksim ./app_sim $*
+

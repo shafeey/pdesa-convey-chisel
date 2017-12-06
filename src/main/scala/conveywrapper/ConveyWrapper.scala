@@ -19,6 +19,7 @@ trait MemParams{
   val memMetaBits: Int = 8
   val sameIDInOrder: Boolean = true
 
+  val MEM_ADDR_WID = 48
   val MEM_RD_CMD: Int = 1
   val MEM_WR_CMD: Int = 2
   val MEM_SIZE_BYTE: Int = 0

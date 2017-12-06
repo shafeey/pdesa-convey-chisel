@@ -4,29 +4,10 @@ import chisel3._
 import chisel3.util._
 import conveywrapper._
 
-//noinspection ScalaStyle
-//object Specs {
-//  val num_cores = 64
-//  val num_lp = 512
-//  val num_events = 1000
-//  val time_bits = 16
-//
-//  val num_core_grp = 8
-//  val num_queues = 4
-//  val queue_size = 255
-//
-//  val hist_size = 16
-//
-//  val sim_end_time = 1000
-//
-//  def lp_bits = log2Ceil(num_lp)
-//
-//  def core_bits = log2Ceil(num_cores)
-//}
 object Specs {
-  val num_cores = 16
-  val num_lp = 64
-  val num_events = 64
+  val num_cores = 64
+  val num_lp = 256
+  val num_events = 256
   val time_bits = 16
 
   val num_core_grp = 8
@@ -36,23 +17,23 @@ object Specs {
   val hist_size = 16
 
   val NUM_MEM_BYTE = 1
-  val mem_addr_wid = 32
 
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)
   def num_cores_per_grp = num_cores/num_core_grp
 }
 
-class PDESAIO(numMemPorts: Int, numReg: Int) extends AcceleratorIF(numMemPorts, numReg){
-  val target_gvt = Input(UInt(Specs.time_bits.W))
-  val done = Valid(UInt(Specs.time_bits.W))
+class PDESA extends Module with PlatformParams{
+  val io = IO(new Bundle{
+    val start = Input(Bool())
+    val target_gvt = Input(UInt(Specs.time_bits.W))
+    val addr = Input(UInt(MEM_ADDR_WID.W))
+    val memPort = Vec(numMemPorts, new ConveyMemMasterIF(rtnctlWidth))
 
-  val dbg: DebugSignalBundle = new DebugSignalBundle
-}
+    val done = Valid(UInt(Specs.time_bits.W))
 
-
-class PDESA extends Accelerator with PlatformParams{
-  val io = IO(new PDESAIO(numMemPorts, numAEGReg))
+    val dbg: DebugSignalBundle = new DebugSignalBundle
+  })
 
 //  val global_start = RegInit(init = false.B)
   val gvt = RegInit(0.U(Specs.time_bits.W))
@@ -138,7 +119,6 @@ class PDESA extends Accelerator with PlatformParams{
     c.bits := x.bits.data // Only need the data bundle
     /* Xbar delay is variable, so start signal from controller may arrive before event.
      * Cores should be ready to catch start signal when in idle */
-    // TODO: Modify cores to catch start signal anytime after idle
   }
 
   /* Cores receive start signal from controller */
@@ -157,10 +137,6 @@ class PDESA extends Accelerator with PlatformParams{
   start_xbar.io.si.foreach(_.ready := true.B)// Convert DecoupledIO to ValidIO
   for (i <- 0 until Specs.num_cores) {
     val destall = startFilter(i, start_xbar.io.si(i / Specs.num_cores_per_grp))
-//    val g_start_msg = Wire(new StartMsg)
-//    g_start_msg.hist_size := 0.U
-//    cores(i).io.start.bits := Mux(global_start, g_start_msg, destall.bits)
-//    cores(i).io.start.valid := global_start || destall.valid
     cores(i).io.start.bits := destall.bits
     cores(i).io.start.valid := destall.valid
   }
@@ -278,6 +254,7 @@ class PDESA extends Accelerator with PlatformParams{
   }
 
   cores.foreach(_.io.run := state === sRUNNING)
+  cores.foreach(_.io.addr := io.addr)
 
   /* Mem port connection */
   assert(Specs.num_cores >= 2 * numMemPorts, "No arbiter necessary for the number of cores specified")
@@ -297,11 +274,6 @@ class PDESA extends Accelerator with PlatformParams{
     io.memPort(i).rsp.ready := true.B
     io.memPort(i).flushReq := false.B
   }
-
-
-
-
-
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
