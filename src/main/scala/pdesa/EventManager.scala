@@ -67,6 +67,9 @@ class EventManagerIO(num_ifc: Int) extends Bundle {
   val ack = Vec(num_ifc, Valid(new EventAckMsg))
   val queue_min = Valid(UInt(Specs.time_bits.W))
   val init = Flipped(Decoupled(Bool()))
+  val conf = new Bundle{
+    val num_init_events = Input(UInt(64.W))
+  }
 }
 
 class EventManager(num_q: Int) extends Module {
@@ -78,8 +81,9 @@ class EventManager(num_q: Int) extends Module {
     }
   }
 
-  val initializer = Module(new InitializationHelper(Specs.num_events))
+  val initializer = Module(new InitializationHelper)
   initializer.io.init <> io.init
+  initializer.io.num_init_events := io.conf.num_init_events
   val init_event = initializer.io.event.map(_.bits.msg)
 
   queues.zipWithIndex.foreach {
@@ -131,14 +135,16 @@ class EventManager(num_q: Int) extends Module {
   io.queue_min.bits := queue_min(Specs.time_bits - 1, 0)
 }
 
-class InitializationHelper(num_events: Int) extends Module {
+class InitializationHelper extends Module {
   val io = IO(new Bundle {
     val init = Flipped(Decoupled(Bool()))
     val event = Vec(Specs.num_queues, Decoupled(new EventDispatchBundle))
     val req = Vec(Specs.num_queues, Decoupled(UInt(Specs.core_bits.W)))
+    val num_init_events = Input(UInt(64.W))
   })
-  val evt_cnt_size = math.max(Specs.lp_bits, log2Ceil(num_events))
-  val evt_cnt = RegInit(0.U(evt_cnt_size.W))
+
+  val num_events = (io.num_init_events >> log2Ceil(Specs.num_queues)).asUInt()
+  val evt_cnt = RegInit(0.U(64.W))
   val req_cnt = RegInit(0.U(Specs.core_bits.W))
 
   val sIDLE :: sEVENT :: sREQ :: sEND :: Nil = Enum(4)
@@ -164,7 +170,7 @@ class InitializationHelper(num_events: Int) extends Module {
           io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(Specs.lp_bits - log2Ceil(Specs.num_queues) -1, 0)),
             time = 0.U, cancel = false.B)
         }
-        when(evt_cnt === (num_events/Specs.num_queues - 1).U) {
+        when(evt_cnt === num_events) {
           state := sREQ
           printf("Start sending initial requests\n")
         }

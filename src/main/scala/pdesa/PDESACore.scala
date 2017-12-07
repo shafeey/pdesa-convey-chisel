@@ -35,6 +35,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     val hist_req = Decoupled(new EventHistoryReq(lp_bits, time_bits))
     val hist_rsp = Flipped(Valid(new EventHistoryRsp(lp_bits, time_bits)))
 
+    val conf = new Bundle{
+      val proc_delay = Input(UInt(Specs.time_bits.W))
+    }
+
     val report = new Bundle{
       val stalled = Output(Bool())
       val mem = Output(Bool())
@@ -78,7 +82,6 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
 
       event_data := io.issued_evt.bits
       event_valid := true.B
-      gvt := io.gvt
       state := sSTALL
       r_last_processed_ts := io.issued_evt.bits.time
 //      event_requested := false.B // Clear flag for next iteration
@@ -90,6 +93,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   val hist_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
   when(io.start.valid) {
     hist_cnt := io.start.bits.hist_size
+    gvt := io.gvt
     stalled := false.B
   }
 
@@ -230,14 +234,14 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
 
   def PROC_DELAY_task = {
     delay_counter := delay_counter + 1.U
-    when(delay_counter === 10.U) {
+    when(delay_counter === io.conf.proc_delay) {
       state := sGEN_EVT
     }
   }
 
 
   // Event Generation
-  val rand_lp = LFSR(seed = 15821 ^ core_id)
+  val rand_lp = LFSR(seed = 51843 ^ core_id)
   val rand_offset = LFSR(seed = 25879 ^ core_id)
 
   val evt_out_q = Module(new Queue(Wire(new EventMsg(lp_bits, time_bits)), Specs.hist_size))
@@ -283,7 +287,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
       }.otherwise {
         when(!event_data.cancel_evt) {
           /* Generate a regular new event randomly */
-          val gen_evt_time = event_data.time + rand_offset(4, 0) + 20.U
+          val gen_evt_time = event_data.time + rand_offset(5, 0) + 10.U
           val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
           val gen_evt_type = false.B
           evt_out_q.io.enq.bits.time := gen_evt_time

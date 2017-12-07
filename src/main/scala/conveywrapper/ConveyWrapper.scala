@@ -8,7 +8,7 @@ trait PlatformParams extends MemParams{
   val rtnctlWidth: Int = memIDBits
   val maxNumMemPorts: Int = 8
 
-  val numAEGReg: Int = 8
+  val numAEGReg: Int = 16
   val widAEGReg: Int = 64
 }
 
@@ -66,7 +66,6 @@ class ConveyWrapper(accelerator: () => Accelerator) extends Module with Platform
 
   // Exception when reading AEG Registers
   val invalidAEGId = RegNext(next = (io.dispRegWrite || io.dispRegRead) && (io.dispRegID >= numAEGReg.U), init = false.B)
-
 
   // Create exception from Accelerator response and AEG reading error
   io.dispException := accel.io.exception | (invalidAEGId << 1).asUInt()
