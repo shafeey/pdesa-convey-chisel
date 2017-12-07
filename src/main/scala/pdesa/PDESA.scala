@@ -213,7 +213,7 @@ class PDESA extends Module with PlatformParams{
     .map(x => Mux(x.fire(), x.bits.hist_size >= hist_afull_size.U, false.B))
     .reduce(_ | _)
 
-  val rpt_core_select = Count(state === sEND)
+  val rpt_sum_finished = RegInit(false.B)
 
   switch(state){
     is(sIDLE){
@@ -247,7 +247,7 @@ class PDESA extends Module with PlatformParams{
       }
     }
     is(sEND){
-      when(!Cat(cores.map(_.io.processing)).orR() && rpt_core_select === Specs.num_cores.U) {
+      when(!Cat(cores.map(_.io.processing)).orR() && rpt_sum_finished) {
         state := sIDLE
         printf(">>> Reached end of simulation <<<\n")
         io.done.valid := true.B
@@ -279,6 +279,10 @@ class PDESA extends Module with PlatformParams{
 
   // report back
 
+  val rpt_core_select = Count(state === sEND && !rpt_sum_finished)
+  when(rpt_core_select === (Specs.num_cores-1).U){
+    rpt_sum_finished := true.B
+  }
 
   val tot_cycle = Count(state === sRUNNING)
   io.report.total_cycles := tot_cycle
@@ -294,7 +298,7 @@ class PDESA extends Module with PlatformParams{
   for(i <- 0 until Specs.num_cores){
     when(state === sRUNNING && cores(i).io.report.stalled){stalled_cycles(i) := stalled_cycles(i) + 1.U}
   }
-  when(state === sEND){
+  when(state === sEND && !rpt_sum_finished){
     tot_stall := tot_stall + stalled_cycles(rpt_core_select(Specs.core_bits-1, 0))
   }
   io.report.total_stalls := tot_stall
@@ -304,7 +308,7 @@ class PDESA extends Module with PlatformParams{
   for(i <- 0 until Specs.num_cores){
     when(state === sRUNNING && cores(i).io.report.mem){mem_cycles(i) := mem_cycles(i) + 1.U}
   }
-  when(state === sEND){
+  when(state === sEND && !rpt_sum_finished){
     tot_mem := tot_mem + mem_cycles(rpt_core_select(Specs.core_bits-1, 0))
   }
   io.report.total_mem_time := tot_mem
@@ -363,11 +367,15 @@ class ReportBundle extends Bundle{
   val avg_hist_time = Output(UInt(64.W))
 }
 
+class Count(inc: Bool){
+  val count: UInt = RegInit(0.U(64.W))
+  when(inc){count := count + 1.U}
+}
+
 object Count{
-  val count: UInt = RegInit((~0.U(64.W)).asUInt())
   def apply(inc: Bool): UInt = {
-    when(inc){count := count + 1.U}
-    count
+    val c = new Count(inc)
+    c.count
   }
 }
 
