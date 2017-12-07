@@ -1,0 +1,18 @@
+# Copyright 2013-2014 Convey Computer Corp. 
+
+# Supported Platforms:  hc-1, hc-1ex, hc-2, hc-2ex, wx-690, wx-2000
+CNY_PDK_PLATFORM = wx-2000
+
+# Vadd personality requires read ordering
+NUM_MC_PORTS = 8
+MC_RSP_ORDER = 0
+
+# Personality clock frequency 
+#   CLK_PERS_FREQ = <50|75|100...250>
+#   CLK_PERS_FREQ = SYNC_CLK
+#     default is SYNC_CLK (150 for HC, 167 for WX)
+
+####################################################################
+# Include Convey Makefile Template
+####################################################################
+include $(CNY_PDK)/$(CNY_PDK_REV)/lib/MakefileInclude.cnypdk

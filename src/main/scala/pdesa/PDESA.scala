@@ -2,30 +2,12 @@ package pdesa
 
 import chisel3._
 import chisel3.util._
+import conveywrapper._
 
-//noinspection ScalaStyle
-//object Specs {
-//  val num_cores = 64
-//  val num_lp = 512
-//  val num_events = 1000
-//  val time_bits = 16
-//
-//  val num_core_grp = 8
-//  val num_queues = 4
-//  val queue_size = 255
-//
-//  val hist_size = 16
-//
-//  val sim_end_time = 1000
-//
-//  def lp_bits = log2Ceil(num_lp)
-//
-//  def core_bits = log2Ceil(num_cores)
-//}
 object Specs {
   val num_cores = 64
   val num_lp = 256
-  val num_events = 256
+  val num_events = 512
   val time_bits = 16
 
   val num_core_grp = 8
@@ -34,16 +16,21 @@ object Specs {
 
   val hist_size = 16
 
+  val NUM_MEM_BYTE = 1
+
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)
   def num_cores_per_grp = num_cores/num_core_grp
 }
 
-class PDESA extends Module {
-  val io = IO(new Bundle {
+class PDESA extends Module with PlatformParams{
+  val io = IO(new Bundle{
     val start = Input(Bool())
     val target_gvt = Input(UInt(Specs.time_bits.W))
+    val addr = Input(UInt(MEM_ADDR_WID.W))
+    val memPort = Vec(numMemPorts, new ConveyMemMasterIF(rtnctlWidth))
     val done = Valid(UInt(Specs.time_bits.W))
+    val report = new ReportBundle
 
     val dbg: DebugSignalBundle = new DebugSignalBundle
   })
@@ -132,7 +119,6 @@ class PDESA extends Module {
     c.bits := x.bits.data // Only need the data bundle
     /* Xbar delay is variable, so start signal from controller may arrive before event.
      * Cores should be ready to catch start signal when in idle */
-    // TODO: Modify cores to catch start signal anytime after idle
   }
 
   /* Cores receive start signal from controller */
@@ -151,10 +137,6 @@ class PDESA extends Module {
   start_xbar.io.si.foreach(_.ready := true.B)// Convert DecoupledIO to ValidIO
   for (i <- 0 until Specs.num_cores) {
     val destall = startFilter(i, start_xbar.io.si(i / Specs.num_cores_per_grp))
-//    val g_start_msg = Wire(new StartMsg)
-//    g_start_msg.hist_size := 0.U
-//    cores(i).io.start.bits := Mux(global_start, g_start_msg, destall.bits)
-//    cores(i).io.start.valid := global_start || destall.valid
     cores(i).io.start.bits := destall.bits
     cores(i).io.start.valid := destall.valid
   }
@@ -231,6 +213,8 @@ class PDESA extends Module {
     .map(x => Mux(x.fire(), x.bits.hist_size >= hist_afull_size.U, false.B))
     .reduce(_ | _)
 
+  val rpt_sum_finished = RegInit(false.B)
+
   switch(state){
     is(sIDLE){
       when(io.start) {
@@ -263,7 +247,7 @@ class PDESA extends Module {
       }
     }
     is(sEND){
-      when(!Cat(cores.map(_.io.processing)).orR()) {
+      when(!Cat(cores.map(_.io.processing)).orR() && rpt_sum_finished) {
         state := sIDLE
         printf(">>> Reached end of simulation <<<\n")
         io.done.valid := true.B
@@ -272,6 +256,70 @@ class PDESA extends Module {
   }
 
   cores.foreach(_.io.run := state === sRUNNING)
+  cores.foreach(_.io.addr := io.addr)
+
+  /* Mem port connection */
+  assert(Specs.num_cores >= 2 * numMemPorts, "No arbiter necessary for the number of cores specified")
+  var num_cores_to_memports = Specs.num_cores / Specs.num_core_grp
+  val mem_arbs = for (i <- 0 until numMemPorts) yield {
+    Module(new RRArbiter(io.memPort.head.req.bits.cloneType, num_cores_to_memports))
+  }
+
+  for (i <- 0 until numMemPorts) {
+    for (j <- 0 until num_cores_to_memports){
+      // cores to arbiters
+      cores(i * num_cores_to_memports + j).io.memPort.req <> mem_arbs(i).io.in(j)
+      cores(i * num_cores_to_memports + j).io.memPort.rsp.valid := io.memPort(i).rsp.valid
+      cores(i * num_cores_to_memports + j).io.memPort.rsp.bits := io.memPort(i).rsp.bits
+    }
+    io.memPort(i).req <> mem_arbs(i).io.out
+    io.memPort(i).rsp.ready := true.B
+    io.memPort(i).flushReq := false.B
+  }
+
+  // report back
+
+  val rpt_core_select = Count(state === sEND && !rpt_sum_finished)
+  when(rpt_core_select === (Specs.num_cores-1).U){
+    rpt_sum_finished := true.B
+  }
+
+  val tot_cycle = Count(state === sRUNNING)
+  io.report.total_cycles := tot_cycle
+
+  val tot_antimsg = gen_xbar.io.si.map(x => x.fire() && x.bits.msg.cancel_evt).map(Count(_))
+  io.report.total_antimsg := tot_antimsg.reduce(_ + _)
+
+  val tot_event = ret_xbar.io.si.map(x => x.fire()).map(Count(_))
+  io.report.total_events := tot_event.reduce(_ + _)
+
+  val tot_stall = RegInit(0.U(64.W))
+  val stalled_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  for(i <- 0 until Specs.num_cores){
+    when(state === sRUNNING && cores(i).io.report.stalled){stalled_cycles(i) := stalled_cycles(i) + 1.U}
+  }
+  when(state === sEND && !rpt_sum_finished){
+    tot_stall := tot_stall + stalled_cycles(rpt_core_select(Specs.core_bits-1, 0))
+  }
+  io.report.total_stalls := tot_stall
+
+  val tot_mem = RegInit(0.U(64.W))
+  val mem_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  for(i <- 0 until Specs.num_cores){
+    when(state === sRUNNING && cores(i).io.report.mem){mem_cycles(i) := mem_cycles(i) + 1.U}
+  }
+  when(state === sEND && !rpt_sum_finished){
+    tot_mem := tot_mem + mem_cycles(rpt_core_select(Specs.core_bits-1, 0))
+  }
+  io.report.total_mem_time := tot_mem
+
+  val rpt_gen_vld = Cat(cores.map(_.io.generated_evt.valid))
+  val q_conf = Count((rpt_gen_vld & (rpt_gen_vld - 1.U)).orR())
+  io.report.total_q_conflict := q_conf
+
+  val rpt_hist_req_vld = Cat(cores.map(_.io.hist_req.valid))
+  val hist_conf = Count((rpt_hist_req_vld & (rpt_hist_req_vld - 1.U)).orR())
+  io.report.total_hist_conflict := hist_conf
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
@@ -305,6 +353,30 @@ class DebugSignalBundle extends Bundle{
   val gvt = Output(UInt(Specs.time_bits.W))
   val core_gvt = Output(Vec(Specs.num_cores, UInt(Specs.time_bits.W)))
   val active_lp = Output(Vec(Specs.num_cores, UInt((Specs.lp_bits+1).W)))
+}
+
+class ReportBundle extends Bundle{
+  val total_cycles = Output(UInt(64.W))
+  val total_events = Output(UInt(64.W))
+  val total_stalls = Output(UInt(64.W))
+  val total_antimsg = Output(UInt(64.W))
+  val total_q_conflict = Output(UInt(64.W))
+  val total_hist_conflict = Output(UInt(64.W))
+  val avg_proc_time = Output(UInt(64.W))
+  val total_mem_time = Output(UInt(64.W))
+  val avg_hist_time = Output(UInt(64.W))
+}
+
+class Count(inc: Bool){
+  val count: UInt = RegInit(0.U(64.W))
+  when(inc){count := count + 1.U}
+}
+
+object Count{
+  def apply(inc: Bool): UInt = {
+    val c = new Count(inc)
+    c.count
+  }
 }
 
 object PDESA extends App {
