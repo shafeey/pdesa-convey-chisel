@@ -172,10 +172,11 @@ class PDESA extends Module with PlatformParams{
   }
 
   /* Deliver hist from core to history manager through arbiter and crossbar */
+  val hist_req_buffer = cores.map(_.io.hist_req).map(Queue(_, entries = 1)) // Register the hist req interfaces
   for (i <- 0 until Specs.num_core_grp) {
     for (j <- 0 until Specs.num_cores / Specs.num_core_grp) {
       // cores to arbiters
-      cores(i * Specs.num_cores / Specs.num_core_grp + j).io.hist_req <> hist_arbs(i).io.in(j)
+      hist_req_buffer(i * Specs.num_cores / Specs.num_core_grp + j) <> hist_arbs(i).io.in(j)
     }
     hist_xbar.io.insert(i, hist_arbs(i).io.out.bits.get_target_queue_addr, hist_arbs(i).io.out) // arbiter to xbar input
   }

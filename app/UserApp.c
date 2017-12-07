@@ -19,10 +19,7 @@ int main(int argc, char *argv[])
   uint64_t  total_events;
   uint64_t  total_stalls;
   uint64_t  total_antimsg;
-  uint64_t  total_qconf, rcv_qconf, send_qconf, mem_conf, hist_conf;
-  uint64_t  avg_mem_time;
-  uint64_t  avg_proc_time;
-  uint64_t  avg_hist_time;
+  uint64_t  total_qconf, mem_conf, hist_conf, total_mem_delay;
   
   uint64_t  *cp_a0;
   
@@ -30,7 +27,7 @@ int main(int argc, char *argv[])
   uint64_t  num_init_events = 64;
   uint64_t num_LP = 64;
   uint64_t num_mem_access = 0;
-  uint64_t num_delay = 10;
+  uint64_t num_delays = 10;
 
   uint64_t num_cores = 64;
   uint64_t core_mask = 0xFFFFFFFFFFFFFFFF; // 64 cores
@@ -65,7 +62,7 @@ int main(int argc, char *argv[])
 	num_LP = atoi(argv[2]);
     num_init_events = atoi(argv[3]);
 	num_mem_access = atoi(argv[4]);
-	num_delay = atoi(argv[5]);
+	num_delays = atoi(argv[5]);
   }
   else {
     usage (argv[0]);
@@ -101,22 +98,25 @@ int main(int argc, char *argv[])
     
   num_LP = num_LP-1;
   
-  uint64_t args[5];
+  uint64_t args[7];
   args[0] = (uint64_t) cp_a0; 
   args[1] = sim_end_time;
-  args[2] = num_init_events; 
-  args[3] = num_LP | (num_mem_access << 16) | (num_delay << 32);
+  args[2] = num_init_events;
+  args[3] = num_mem_access;
   args[4] = core_mask;
+  args[5] = num_LP;
+  args[6] = num_delays;
+  
     
   wdm_dispatch_t ds;
   memset((void *)&ds, 0, sizeof(ds));
   for (i=0; i<4; i++) {
     ds.ae[i].aeg_ptr_s = args;
-    ds.ae[i].aeg_cnt_s = 5;
+    ds.ae[i].aeg_cnt_s = 7;
     ds.ae[i].aeg_base_s = 0;
     ds.ae[i].aeg_ptr_r = &report[i*16];
-    ds.ae[i].aeg_cnt_r = 10;
-    ds.ae[i].aeg_base_r = 5;
+    ds.ae[i].aeg_cnt_r = 9;
+    ds.ae[i].aeg_base_r = 7;
   }
 
   if (wdm_dispatch(m_coproc, &ds)) {
@@ -135,34 +135,23 @@ int main(int argc, char *argv[])
 
   gvt = report[0];
   total_cycles = report[1];
-  total_events = report[2];
-  total_stalls = report[3];
+  total_stalls = report[2];
+  total_events = report[3];
   total_antimsg = report[4];
-  total_qconf = (report[5] >> 42) << 3;
-  rcv_qconf = ((report[5] >> 21) & 0x1FFFFF ) << 3;
-  send_qconf = ((report[5]) & 0x1FFFFF ) << 3;
-  
-  avg_proc_time = report[6];
-  avg_mem_time = report[7];
-  avg_hist_time = report[8];
-  
-  mem_conf = (report[9] >> 32);
-  hist_conf = (report[9] & 0xFFFFFFFF);
+  total_qconf = report[5];
+  hist_conf = report[6];
+  mem_conf = report[7];
+  total_mem_delay = report[8];
     
-
   printf("Returned GVT = %lld\n", (long long) gvt);
   printf("Total cycles = %lld\n", (long long) total_cycles);
+  printf("Total stall cycles = %lld\n", (long long) total_stalls);
   printf("Total events = %lld\n", (long long) total_events);
   printf("Total antimessages = %lld\n", (long long) total_antimsg);
-  printf("Total stall cycles = %lld\n", (long long) total_stalls);
-  printf("Total active time per core = %lld\n", (long long) avg_proc_time);
-  printf("Total memory access time per core = %lld\n", (long long) avg_mem_time);
-  printf("Total history access time per core = %lld\n", (long long) avg_hist_time);
   printf("Contention for queue = %lld\n", (long long) total_qconf);
-  printf("Contention for queue receive = %lld\n", (long long) rcv_qconf);
-  printf("Contention for queue send= %lld\n", (long long) send_qconf);
   printf("Contention for history table = %lld\n", (long long) hist_conf);
   printf("Contention for memory interface = %lld\n", (long long) mem_conf);
+  printf("Total memory access time per core = %lld\n", (long long) total_mem_delay);
   
   return 0;
 }
