@@ -24,9 +24,9 @@ int main(int argc, char *argv[])
   uint64_t  *cp_a0;
   
   uint64_t  sim_end_time = 1000;
-  uint64_t  num_init_events = 64;
+  uint64_t  num_init_events = 512;
   uint64_t num_LP = 64;
-  uint64_t num_mem_access = 0;
+  uint64_t num_mem_access = 0xFFFFFFFFFFFFFFFF;
   uint64_t num_delays = 10;
 
   uint64_t num_cores = 64;
@@ -61,7 +61,7 @@ int main(int argc, char *argv[])
 	sim_end_time = atoi(argv[1]);
 	num_LP = atoi(argv[2]);
     num_init_events = atoi(argv[3]);
-	num_mem_access = atoi(argv[4]);
+	num_mem_access = atoi(argv[4]) < 0 ? 0xFFFFFFFFFFFFFFFF : atoi(argv[4]);
 	num_delays = atoi(argv[5]);
   }
   else {
@@ -69,8 +69,8 @@ int main(int argc, char *argv[])
     return 0;
   }
   
-  printf("Simulation will run until GVT = %lld with %lld LPs and %lld initial events on %lld cores\n",
-			(long long) sim_end_time, (long long) num_LP, (long long) num_init_events, (long long) num_cores);
+  printf("Simulation will run until GVT = %lld with %lld LPs and %lld initial events on %lld cores with %lld memory access\n",
+			(long long) sim_end_time, (long long) num_LP, (long long) num_init_events, (long long) num_cores, (long long) num_mem_access);
   fflush(stdout);
 
   

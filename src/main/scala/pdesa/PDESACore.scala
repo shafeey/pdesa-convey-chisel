@@ -37,6 +37,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
 
     val conf = new Bundle{
       val proc_delay = Input(UInt(Specs.time_bits.W))
+      val num_mem_access = Input(UInt(64.W))
     }
 
     val report = new Bundle{
@@ -172,10 +173,12 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   // Memory access
-  // TODO: Implement memory access later. Simulate by a delay only
-  val mem_delay_counter = Reg(63.U.cloneType)
+  val rand_mem_delay = LFSR(seed = 35179 ^ core_id)
+  val mem_delay_target = RegInit(0.U(10.W))
+  val mem_delay_counter = RegInit(0.U(10.W))
   when(state === sIDLE) {
     mem_delay_counter := 0.U
+    mem_delay_target := 220.U + rand_mem_delay(5,0)
   }
   .elsewhen(state === sLD_MEM) {
     mem_delay_counter := mem_delay_counter + 1.U
@@ -187,15 +190,22 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   val rtnCtl = Cat(event_data.time, event_data.lp_id, core_id.U(Specs.core_bits.W))
   val req_vaddr = io.addr + (event_data.lp_id << log2Ceil(Specs.NUM_MEM_BYTE)).asUInt()
   def MEM_LD_task = {
-    val req = Wire(io.memPort.req.bits.cloneType)
-    req.addr := req_vaddr
-    req.cmd := MEM_RD_CMD.U
-    req.rtnCtl := rtnCtl
-    req.size := MEM_SIZE_BYTE.U
+    when(!io.conf.num_mem_access.andR()) {
+      val req = Wire(io.memPort.req.bits.cloneType)
+      req.addr := req_vaddr
+      req.cmd := MEM_RD_CMD.U
+      req.rtnCtl := rtnCtl
+      req.size := MEM_SIZE_BYTE.U
 
-    io.memPort.req.enq(req)
-    when(io.memPort.req.fire()) {
-      state := sLD_RTN
+      io.memPort.req.enq(req)
+      when(io.memPort.req.fire()) {
+        state := sLD_RTN
+      }
+    }.otherwise{
+      // When num_mem_access is set to -1 (0xFFFFFFFFFFFFFFF), we emulate memory access by a delay
+      when(mem_delay_counter === mem_delay_target){
+        state := sPROC_DELAY
+      }
     }
   }
 
@@ -206,16 +216,20 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   def MEM_ST_task = {
-    val req = Wire(io.memPort.req.bits.cloneType)
-    req.addr := req_vaddr
-    req.cmd := MEM_WR_CMD.U
-    req.rtnCtl := rtnCtl
-    req.size := MEM_SIZE_BYTE.U
-    req.writeData := rtnCtl
+    when(!io.conf.num_mem_access.andR()) {
+      val req = Wire(io.memPort.req.bits.cloneType)
+      req.addr := req_vaddr
+      req.cmd := MEM_WR_CMD.U
+      req.rtnCtl := rtnCtl
+      req.size := MEM_SIZE_BYTE.U
+      req.writeData := rtnCtl
 
-    io.memPort.req.enq(req)
-    when(io.memPort.req.fire()) {
-      state := sST_RTN
+      io.memPort.req.enq(req)
+      when(io.memPort.req.fire()) {
+        state := sST_RTN
+      }
+    }.otherwise{
+      state := sFINALISE
     }
   }
 
