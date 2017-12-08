@@ -5,7 +5,7 @@ import chisel3.util._
 import pdesa._
 
 
-protected class EventDataBundle[D <: Data](data_type: D, LP_id_bits: Int, time_bits: Int) extends Bundle {
+protected class EventDataBundle[D <: EventMsg](data_type: D, LP_id_bits: Int, time_bits: Int) extends Bundle {
   val data = data_type.cloneType
   val lp = UInt(LP_id_bits.W)
   val time = UInt(time_bits.W)
@@ -14,15 +14,14 @@ protected class EventDataBundle[D <: Data](data_type: D, LP_id_bits: Int, time_b
     new EventDataBundle(data_type, LP_id_bits, time_bits).asInstanceOf[this.type]
 }
 
-protected class QueueController[T <: Data](event_type: EventDataBundle[T], size: Int) extends Module {
+protected class QueueController[T <: EventMsg](event_type: EventDataBundle[T], size: Int, order_by: T => UInt) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(event_type))
     val out = Decoupled(event_type)
   })
 
   val pq_stages: Int = log2Ceil(size + 1)
-
-  val pq = Module(new PriorityQueue(event_type.data, event_type.time, pq_stages))
+  val pq = Module(new PriorityQueue(event_type.data, order_by, pq_stages))
 
   val count: UInt = pq.io.count
   val deq_valid = Mux(count === 0.U, false.B, pq.io.ready)
@@ -30,11 +29,11 @@ protected class QueueController[T <: Data](event_type: EventDataBundle[T], size:
 
   io.in.ready := enq_ready
   pq.io.in.data := io.in.bits.data
-  pq.io.in.priority := io.in.bits.time
 
   io.out.valid := deq_valid
   io.out.bits.data := pq.io.out.data
-  io.out.bits.time := pq.io.out.priority
+  io.out.bits.lp := pq.io.out.data.lp_id
+  io.out.bits.time := pq.io.out.data.time
 
   /* Enqueue operation when an event is valid and queue is ready for operation
    * Dequeue when output is ready to receive and queue is ready for operation
@@ -75,9 +74,10 @@ class EventManagerIO(num_ifc: Int) extends Bundle {
 class EventManager(num_q: Int) extends Module {
   val io = IO(new EventManagerIO(num_q))
 
+  val order_by: EventMsg => UInt = d => Cat(d.time, !d.cancel_evt).asUInt()
   val queues = for (i <- 0 until num_q) yield {
     Module {
-      new QueueController(new EventDataBundle(io.in(0).bits.msg, Specs.lp_bits, Specs.time_bits), Specs.queue_size)
+      new QueueController(new EventDataBundle(io.in(0).bits.msg, Specs.lp_bits, Specs.time_bits), Specs.queue_size, order_by)
     }
   }
 

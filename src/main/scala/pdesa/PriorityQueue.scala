@@ -3,7 +3,7 @@ package pdesa
 import chisel3._
 import chisel3.util._
 
-class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int) extends Module{
+class PriorityQueue[T <: Data, P <: UInt](dtype: T, order_by: T => UInt, num_stages : Int) extends Module{
   val sNOP :: sENQUEUE :: sDEQUEUE :: sREPLACE :: Nil = Enum(4)
 
   val io = IO(new PriorityQueueIO)
@@ -54,7 +54,7 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
 
   class PriorityQueueBundle  extends Bundle{
     val data = dtype.cloneType
-    val priority = ptype.cloneType
+    def priority = order_by(data)
 
     override def cloneType: PriorityQueueBundle.this.type = (new PriorityQueueBundle).asInstanceOf[this.type]
   }
@@ -234,5 +234,5 @@ class PriorityQueue[T <: Data, P <: UInt](dtype: T, ptype : P, num_stages : Int)
 }
 
 object PriorityQueue extends App{
-  chisel3.Driver.execute(args, () => new PriorityQueue(0.U(8.W), 0.U(8.W), 5))
+  chisel3.Driver.execute(args, () => new PriorityQueue(0.U(8.W), (d: UInt) => d.asUInt(), 5))
 }
