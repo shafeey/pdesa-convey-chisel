@@ -188,6 +188,7 @@ class ControllerIO extends Bundle {
   val finished = Flipped(Vec(Specs.num_queues, Decoupled(new CoreFinishedSignal)))
   val start_sig = Vec(Specs.num_queues, Decoupled(new StartMsg))
 
+  val recommended_q = Input(UInt(Specs.num_queues.W))
   val force_sync = Input(Bool())
 }
 
@@ -231,20 +232,56 @@ class Controller extends Module {
     Queue(w, entries = Specs.num_cores, flow = false)
   }
 
-  // Each event queue has a token to serve one of the request queues. Tokens rotate on each cycle.
+  // X3 - Create event request
+  // Connect requests to queue
+  val requestServer = Module(new EventRequestServer)
+  requestServer.io.req_in.zip(issue_reqs).foreach(x => x._1 <> x._2)
+  io.evt_req.zip(requestServer.io.req_out).foreach(x => x._1 <> x._2)
+  requestServer.io.recommended_q := io.recommended_q
+  requestServer.io.foreced_sync := io.force_sync
+
+//   Each event queue has a token to serve one of the request queues. Tokens rotate on each cycle.
+//  val tokens: Seq[UInt] = for(i <- 0 until Specs.num_queues) yield RegInit((1 << i).U(Specs.num_queues.W))
+//  tokens.head := tokens.last
+//  for(t<- 1 until Specs.num_queues){tokens(t) := tokens(t-1)}
+
+  for(i<- 0 until Specs.num_queues){
+    when(io.evt_req(i).fire()){
+      printf("~~~~ Requesting new event for EP: %d\n", io.evt_req(i).bits)
+    }
+  }
+}
+
+protected class EventRequestServer extends Module{
+  val io = IO(new Bundle{
+    val req_in = Flipped(Vec(Specs.num_queues, DecoupledIO(UInt(Specs.core_bits.W))))
+    val req_out = Vec(Specs.num_queues, DecoupledIO(UInt(Specs.core_bits.W)))
+    val recommended_q = Input(UInt(Specs.num_queues.W))
+    val foreced_sync = Input(Bool())
+  })
+
+  /* When more than one events are present, input and outputs are served by a token system
+   * Each out channel has a token to serve one of the request input. Tokens rotate on each cycle. */
   val tokens: Seq[UInt] = for(i <- 0 until Specs.num_queues) yield RegInit((1 << i).U(Specs.num_queues.W))
   tokens.head := tokens.last
   for(t<- 1 until Specs.num_queues){tokens(t) := tokens(t-1)}
 
-//  val muxes = for(i <- 0 until Specs.num_queues) yield {Mux1H(tokens(i), issue_reqs.map(_.bits))}
+  val single_requester = !(Cat(io.req_in.map(_.valid)) & (Cat(io.req_in.map(_.valid)) - 1.U)).orR
+  val arbiter = Seq.fill(Specs.num_queues)(Module(new Arbiter(gen = io.req_in.head.bits, n = Specs.num_queues)))
   for(i<- 0 until Specs.num_queues){
-    // X3 - Create event request
-    io.evt_req(i).valid := Mux1H(tokens(i), issue_reqs.map(_.valid)) && !io.force_sync
-    io.evt_req(i).bits := Mux1H(tokens(i), issue_reqs.map(_.bits))
-    issue_reqs(i).ready := tokens.map(_(i)).zip(io.evt_req.map(_.ready)).map(x => x._1 & x._2).reduce(_ | _) && !io.force_sync
-    when(io.evt_req(i).fire()){
-      printf("~~~~ Requesting new event for EP: %d\n", io.evt_req(i).bits)
-    }
+    arbiter(i).io.in.zip(io.req_in).foreach(a => {
+      a._1.valid := a._2.valid
+      a._1.bits := a._2.bits
+    })
+    arbiter(i).io.out.ready := io.req_out(i).ready && io.recommended_q === i.U
+
+    val muxed_valid = Mux1H(tokens(i), io.req_in.map(_.valid))
+    val muxed_bits = Mux1H(tokens(i), io.req_in.map(_.bits))
+    val muxed_ready = tokens.map(_(i)).zip(io.req_out.map(_.ready)).map(x => x._1 & x._2).reduce(_ | _)
+
+    io.req_out(i).valid := Mux(single_requester, arbiter(i).io.out.valid && io.recommended_q === i.U , muxed_valid) && !io.foreced_sync
+    io.req_out(i).bits := Mux(single_requester, arbiter(i).io.out.bits, muxed_bits)
+    io.req_in(i).ready := Mux(single_requester, arbiter.map(_.io.in(i).ready).reduce(_ | _), muxed_ready) && !io.foreced_sync
   }
 }
 

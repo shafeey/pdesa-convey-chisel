@@ -163,6 +163,7 @@ class PDESA extends Module with PlatformParams{
 
   /* Controller request events for idle cores */
   evt_mgr.io.evt_req.zip(controller.io.evt_req).foreach{case(e, c) => e <> c}
+  controller.io.recommended_q := evt_mgr.io.recommended_q
 
   /* Connect cores to event history for requesting past events*/
   val evt_hist_mgr = Module(new EventHistoryManager)
