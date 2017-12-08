@@ -46,6 +46,7 @@ class PDESA extends Module with PlatformParams{
   }
   cores.foreach(_.io.gvt := gvt)
   cores.foreach(_.io.conf.proc_delay := conf.proc_delay)
+  cores.foreach(_.io.conf.num_mem_access := conf.num_mem_access)
 
   val gen_xbar = Module(new Crossbar(new EventDispatchBundle, Specs.num_core_grp, Specs.num_queues))
   val gen_arbs = for (i <- 0 until Specs.num_core_grp) yield {
@@ -392,6 +393,8 @@ class ReportBundle extends Bundle{
 }
 
 class ConfBundle extends Bundle{
+  val num_mem_access = Input(UInt(64.W))
+
   val proc_delay = Input(UInt(Specs.time_bits.W))
   val num_init_events = Input(UInt(64.W))
 }

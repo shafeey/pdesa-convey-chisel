@@ -93,6 +93,7 @@ class PDESAccelerator extends Accelerator with PlatformParams{
   pdesa_engine.io.addr := io.regPort(ADDR_A1)
   pdesa_engine.io.conf.proc_delay := io.regPort(NUM_DELAYS)
   pdesa_engine.io.conf.num_init_events := io.regPort(NUM_INIT_EVENTS)
+  pdesa_engine.io.conf.num_mem_access := io.regPort(NUM_MEM_ACCESS)
   pdesa_engine.io.memPort.zip(io.memPort).foreach(mp => mp._1 <> mp._2)
 
   /* Keep engines in other AE disabled. Only run in AE 0 */
