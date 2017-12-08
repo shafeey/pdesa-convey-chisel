@@ -11,7 +11,23 @@ class PDESAccelerator extends Accelerator with PlatformParams{
   val pdesa_engine = Module(new PDESA)
 
   /* Interface registers */
-  val sADDR_A1 :: sSIM_END_TIME :: sNUM_INIT_EVENTS :: sNUM_MEM_ACCESS :: sNUM_LP_MASK :: sRET_GVT :: sTOT_CYCLES :: sTOT_STALLS :: sTOT_EVENTS :: sTOT_ANTIMSG :: sTOT_QCONF :: sTOT_HIST_CONF :: sTOT_MEM_DELAY :: sSTATUS :: Nil = Enum(14)
+  val ADDR_A1 = 0
+  val SIM_END_TIME = 1
+  val NUM_INIT_EVENTS = 2
+  val NUM_MEM_ACCESS = 3
+  val CORE_MASK = 4
+  val NUM_LP_MASK =5
+  val NUM_DELAYS = 6
+
+  val RET_GVT = 7
+  val TOT_CYCLES = 8
+  val TOT_STALLS = 9
+  val TOT_EVENTS = 10
+  val TOT_ANTIMSG = 11
+  val TOT_Q_CONF = 12
+  val TOT_HIST_CONF = 13
+  val TOT_MEM_CONF = 14
+  val TOT_MEM_DELAY = 15
 
   val MAX_SIM_TIME = (~0.U(32.W)).asUInt()
   val sim_time_counter = RegInit(0.U(32.W))
@@ -51,28 +67,33 @@ class PDESAccelerator extends Accelerator with PlatformParams{
 
   // report back
   when(pdesa_engine.io.done.valid){
-    io.retPort(sRET_GVT).valid := true.B
-    io.retPort(sRET_GVT).bits := pdesa_engine.io.done.bits
+    io.retPort(RET_GVT).valid := true.B
+    io.retPort(RET_GVT).bits := pdesa_engine.io.done.bits
 
-    io.retPort(sTOT_CYCLES).valid := true.B
-    io.retPort(sTOT_CYCLES).bits := pdesa_engine.io.report.total_cycles
-    io.retPort(sTOT_STALLS).valid := true.B
-    io.retPort(sTOT_STALLS).bits := pdesa_engine.io.report.total_stalls
-    io.retPort(sTOT_EVENTS).valid := true.B
-    io.retPort(sTOT_EVENTS).bits := pdesa_engine.io.report.total_events
-    io.retPort(sTOT_ANTIMSG).valid := true.B
-    io.retPort(sTOT_ANTIMSG).bits := pdesa_engine.io.report.total_antimsg
-    io.retPort(sTOT_QCONF).valid := true.B
-    io.retPort(sTOT_QCONF).bits := pdesa_engine.io.report.total_q_conflict
-    io.retPort(sTOT_HIST_CONF).valid := true.B
-    io.retPort(sTOT_HIST_CONF).bits := pdesa_engine.io.report.total_hist_conflict
-    io.retPort(sTOT_MEM_DELAY).valid := true.B
-    io.retPort(sTOT_MEM_DELAY).bits := pdesa_engine.io.report.total_mem_time
+    io.retPort(TOT_CYCLES).valid := true.B
+    io.retPort(TOT_CYCLES).bits := pdesa_engine.io.report.total_cycles
+    io.retPort(TOT_STALLS).valid := true.B
+    io.retPort(TOT_STALLS).bits := pdesa_engine.io.report.total_stalls
+    io.retPort(TOT_EVENTS).valid := true.B
+    io.retPort(TOT_EVENTS).bits := pdesa_engine.io.report.total_events
+    io.retPort(TOT_ANTIMSG).valid := true.B
+    io.retPort(TOT_ANTIMSG).bits := pdesa_engine.io.report.total_antimsg
+    io.retPort(TOT_Q_CONF).valid := true.B
+    io.retPort(TOT_Q_CONF).bits := pdesa_engine.io.report.total_q_conflict
+    io.retPort(TOT_HIST_CONF).valid := true.B
+    io.retPort(TOT_HIST_CONF).bits := pdesa_engine.io.report.total_hist_conflict
+    io.retPort(TOT_MEM_CONF).valid := true.B
+    io.retPort(TOT_MEM_CONF).bits := pdesa_engine.io.report.total_mem_conflict
+    io.retPort(TOT_MEM_DELAY).valid := true.B
+    io.retPort(TOT_MEM_DELAY).bits := pdesa_engine.io.report.total_mem_time
   }
 
   pdesa_engine.io.start := state === sRUNNING
-  pdesa_engine.io.target_gvt := io.regPort(sSIM_END_TIME)
-  pdesa_engine.io.addr := io.regPort(sADDR_A1)
+  pdesa_engine.io.target_gvt := io.regPort(SIM_END_TIME)
+  pdesa_engine.io.addr := io.regPort(ADDR_A1)
+  pdesa_engine.io.conf.proc_delay := io.regPort(NUM_DELAYS)
+  pdesa_engine.io.conf.num_init_events := io.regPort(NUM_INIT_EVENTS)
+  pdesa_engine.io.conf.num_mem_access := io.regPort(NUM_MEM_ACCESS)
   pdesa_engine.io.memPort.zip(io.memPort).foreach(mp => mp._1 <> mp._2)
 
   /* Keep engines in other AE disabled. Only run in AE 0 */

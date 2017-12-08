@@ -10,7 +10,9 @@ import scala.util.Random
 
 class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
   val max_cycle = 60000
-  val target_gvt = 500
+  val target_gvt = 2000
+  val proc_delay = 10
+  val num_init_events = 10
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {
@@ -104,6 +106,8 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
 
   poke(c.io.start, 0)
   poke(c.io.target_gvt, target_gvt)
+  poke(c.io.conf.proc_delay, proc_delay)
+  poke(c.io.conf.num_init_events, num_init_events)
   step(1)
   poke(c.io.start, 1)
 
@@ -223,7 +227,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
         expect(event_q(fin.lp).size + cancel_q(fin.lp).size == fin.hist_size,
           s"Number of events written back ${fin.hist_size}, expected: ${event_q(fin.lp).size + cancel_q(fin.lp).size}" +
             s" in core ${fin.coreid}(${fin.lp})")
-        expect(fin.hist_size <= Specs.hist_size/2 + 1, "History overflow possibility")
+        expect(fin.hist_size <= Specs.hist_size - 2, "History overflow possibility")
         core_event(cid) = Event(-1, -1, -1) // Mark core inactive
         core_started(cid) = -1
       }

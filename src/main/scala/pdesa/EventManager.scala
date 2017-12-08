@@ -5,7 +5,7 @@ import chisel3.util._
 import pdesa._
 
 
-protected class EventDataBundle[D <: Data](data_type: D, LP_id_bits: Int, time_bits: Int) extends Bundle {
+protected class EventDataBundle[D <: EventMsg](data_type: D, LP_id_bits: Int, time_bits: Int) extends Bundle {
   val data = data_type.cloneType
   val lp = UInt(LP_id_bits.W)
   val time = UInt(time_bits.W)
@@ -14,15 +14,14 @@ protected class EventDataBundle[D <: Data](data_type: D, LP_id_bits: Int, time_b
     new EventDataBundle(data_type, LP_id_bits, time_bits).asInstanceOf[this.type]
 }
 
-protected class QueueController[T <: Data](event_type: EventDataBundle[T], size: Int) extends Module {
+protected class QueueController[T <: EventMsg](event_type: EventDataBundle[T], size: Int, order_by: T => UInt) extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(event_type))
     val out = Decoupled(event_type)
   })
 
   val pq_stages: Int = log2Ceil(size + 1)
-
-  val pq = Module(new PriorityQueue(event_type.data, event_type.time, pq_stages))
+  val pq = Module(new PriorityQueue(event_type.data, order_by, pq_stages))
 
   val count: UInt = pq.io.count
   val deq_valid = Mux(count === 0.U, false.B, pq.io.ready)
@@ -30,11 +29,11 @@ protected class QueueController[T <: Data](event_type: EventDataBundle[T], size:
 
   io.in.ready := enq_ready
   pq.io.in.data := io.in.bits.data
-  pq.io.in.priority := io.in.bits.time
 
   io.out.valid := deq_valid
   io.out.bits.data := pq.io.out.data
-  io.out.bits.time := pq.io.out.priority
+  io.out.bits.lp := pq.io.out.data.lp_id
+  io.out.bits.time := pq.io.out.data.time
 
   /* Enqueue operation when an event is valid and queue is ready for operation
    * Dequeue when output is ready to receive and queue is ready for operation
@@ -66,20 +65,26 @@ class EventManagerIO(num_ifc: Int) extends Bundle {
   val evt_req = Flipped(Vec(num_ifc, Decoupled(UInt(Specs.core_bits.W))))
   val ack = Vec(num_ifc, Valid(new EventAckMsg))
   val queue_min = Valid(UInt(Specs.time_bits.W))
+  val recommended_q = Output(UInt(Specs.num_queues.W))
   val init = Flipped(Decoupled(Bool()))
+  val conf = new Bundle{
+    val num_init_events = Input(UInt(64.W))
+  }
 }
 
 class EventManager(num_q: Int) extends Module {
   val io = IO(new EventManagerIO(num_q))
 
+  val order_by: EventMsg => UInt = d => Cat(d.time, !d.cancel_evt).asUInt()
   val queues = for (i <- 0 until num_q) yield {
     Module {
-      new QueueController(new EventDataBundle(io.in(0).bits.msg, Specs.lp_bits, Specs.time_bits), Specs.queue_size)
+      new QueueController(new EventDataBundle(io.in(0).bits.msg, Specs.lp_bits, Specs.time_bits), Specs.queue_size, order_by)
     }
   }
 
-  val initializer = Module(new InitializationHelper(Specs.num_events))
+  val initializer = Module(new InitializationHelper)
   initializer.io.init <> io.init
+  initializer.io.num_init_events := io.conf.num_init_events
   val init_event = initializer.io.event.map(_.bits.msg)
 
   queues.zipWithIndex.foreach {
@@ -89,7 +94,7 @@ class EventManager(num_q: Int) extends Module {
       q.io.in.noenq()
       io.ack(i).valid := false.B
 
-      io.evt_req(i).nodeq()
+      io.evt_req(i).ready := q.io.out.valid
       initializer.io.req(i).nodeq()
       io.out(i).valid := false.B
       when(io.evt_req(i).valid || initializer.io.req(i).valid){
@@ -129,16 +134,25 @@ class EventManager(num_q: Int) extends Module {
   val queue_min = queues.map(_.io.out).map(x => Cat(!x.valid, x.bits.time)).reduce((a,b) => Mux(a < b, a, b))
   io.queue_min.valid := !Reverse(queue_min)(0)
   io.queue_min.bits := queue_min(Specs.time_bits - 1, 0)
+
+  // recommend queue with minimum timestamp for draining
+  val min_q_id = queues.map(_.io.out).zipWithIndex
+    .map(x => (Cat(!x._1.valid, x._1.bits.time), x._2.U))
+    .reduce((a,b) => (Mux(a._1 < b._1, a._1, b._1), Mux(a._1 < b._1, a._2, b._2)))._2
+  val r_min_q_id = RegNext(min_q_id)
+  io.recommended_q := r_min_q_id
 }
 
-class InitializationHelper(num_events: Int) extends Module {
+class InitializationHelper extends Module {
   val io = IO(new Bundle {
     val init = Flipped(Decoupled(Bool()))
     val event = Vec(Specs.num_queues, Decoupled(new EventDispatchBundle))
     val req = Vec(Specs.num_queues, Decoupled(UInt(Specs.core_bits.W)))
+    val num_init_events = Input(UInt(64.W))
   })
-  val evt_cnt_size = math.max(Specs.lp_bits, log2Ceil(num_events))
-  val evt_cnt = RegInit(0.U(evt_cnt_size.W))
+
+  val num_events = (io.num_init_events >> log2Ceil(Specs.num_queues)).asUInt()
+  val evt_cnt = RegInit(0.U(64.W))
   val req_cnt = RegInit(0.U(Specs.core_bits.W))
 
   val sIDLE :: sEVENT :: sREQ :: sEND :: Nil = Enum(4)
@@ -164,7 +178,7 @@ class InitializationHelper(num_events: Int) extends Module {
           io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(Specs.lp_bits - log2Ceil(Specs.num_queues) -1, 0)),
             time = 0.U, cancel = false.B)
         }
-        when(evt_cnt === (num_events/Specs.num_queues - 1).U) {
+        when(evt_cnt === num_events) {
           state := sREQ
           printf("Start sending initial requests\n")
         }

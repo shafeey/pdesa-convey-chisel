@@ -1,4 +1,4 @@
 #!/bin/sh
 
 #runpdksim -nohwsim ../app/app_sim $*
-runpdksim -deadman=5000000000 -mc_read_short_min_delay=25 -mc_read_short_max_delay=75 -mc_read_long_min_delay=275 -mc_read_long_max_delay=400 -mc_write_complete_min_delay=20 -mc_write_complete_max_delay=75 -ae=0 +activity_count_threshold=0 ../app/app_sim $*
+runpdksim -deadman=5000000000 -mc_read_short_min_delay=70 -mc_read_short_max_delay=200 -mc_read_long_min_delay=400 -mc_read_long_max_delay=600 -mc_write_complete_min_delay=70 -mc_write_complete_max_delay=150 -ae=0 +activity_count_threshold=0 ../app/app_sim $*

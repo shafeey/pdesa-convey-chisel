@@ -40,6 +40,11 @@ class EventHistoryReq(lp_bits: Int, time_bits: Int) extends Bundle {
   val op = UInt(1.W)
   val msg = new EventHistoryMsg(lp_bits, time_bits)
 
+  def get_target_queue_addr: UInt = {
+    val lower_bits_rev = Reverse(origin_lp)(log2Ceil(Specs.num_queues)-1, 0)
+    Reverse(lower_bits_rev)
+  }
+
   override def cloneType: EventHistoryReq.this.type =
     new EventHistoryReq(lp_bits, time_bits).asInstanceOf[this.type]
 

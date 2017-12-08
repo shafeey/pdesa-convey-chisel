@@ -12,11 +12,11 @@ object Specs {
 
   val num_core_grp = 8
   val num_queues = 4
-  val queue_size = 255
+  val queue_size = 511
 
   val hist_size = 16
 
-  val NUM_MEM_BYTE = 1
+  val NUM_MEM_BYTE = 8
 
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)
@@ -31,18 +31,22 @@ class PDESA extends Module with PlatformParams{
     val memPort = Vec(numMemPorts, new ConveyMemMasterIF(rtnctlWidth))
     val done = Valid(UInt(Specs.time_bits.W))
     val report = new ReportBundle
+    val conf = new ConfBundle
 
     val dbg: DebugSignalBundle = new DebugSignalBundle
   })
 
 //  val global_start = RegInit(init = false.B)
   val gvt = RegInit(0.U(Specs.time_bits.W))
+  val conf = RegNext(io.conf)
 
   // Instantiate cores
   val cores = for (i <- 0 until Specs.num_cores) yield {
     Module(new PDESACore(i, Specs.lp_bits, Specs.time_bits))
   }
   cores.foreach(_.io.gvt := gvt)
+  cores.foreach(_.io.conf.proc_delay := conf.proc_delay)
+  cores.foreach(_.io.conf.num_mem_access := conf.num_mem_access)
 
   val gen_xbar = Module(new Crossbar(new EventDispatchBundle, Specs.num_core_grp, Specs.num_queues))
   val gen_arbs = for (i <- 0 until Specs.num_core_grp) yield {
@@ -50,6 +54,7 @@ class PDESA extends Module with PlatformParams{
   }
 
   val evt_mgr = Module(new EventManager(Specs.num_queues))
+  evt_mgr.io.conf.num_init_events := io.conf.num_init_events
 
   /* Deliver event from core to event queue through arbiter and crossbar */
   for (i <- 0 until Specs.num_core_grp) {
@@ -159,23 +164,38 @@ class PDESA extends Module with PlatformParams{
 
   /* Controller request events for idle cores */
   evt_mgr.io.evt_req.zip(controller.io.evt_req).foreach{case(e, c) => e <> c}
+  controller.io.recommended_q := evt_mgr.io.recommended_q
 
   /* Connect cores to event history for requesting past events*/
   val evt_hist_mgr = Module(new EventHistoryManager)
-  val hist_arb = Module(new RRArbiter(evt_hist_mgr.io.hist_req.bits.cloneType, Specs.num_cores))
-  for(i<- 0 until Specs.num_cores){
-    cores(i).io.hist_req <> hist_arb.io.in(i)
+  val hist_xbar = Module(new Crossbar(evt_hist_mgr.io.hist_req.head.bits.cloneType, Specs.num_core_grp, Specs.num_queues))
+  val hist_arbs = for (i <- 0 until Specs.num_core_grp) yield {
+    Module(new RRArbiter(evt_hist_mgr.io.hist_req.head.bits.cloneType, Specs.num_cores / Specs.num_core_grp))
   }
-  hist_arb.io.out <> evt_hist_mgr.io.hist_req
+
+  /* Deliver hist from core to history manager through arbiter and crossbar */
+  val hist_req_buffer = cores.map(_.io.hist_req).map(Queue(_, entries = 1)) // Register the hist req interfaces
+  for (i <- 0 until Specs.num_core_grp) {
+    for (j <- 0 until Specs.num_cores / Specs.num_core_grp) {
+      // cores to arbiters
+      hist_req_buffer(i * Specs.num_cores / Specs.num_core_grp + j) <> hist_arbs(i).io.in(j)
+    }
+    hist_xbar.io.insert(i, hist_arbs(i).io.out.bits.get_target_queue_addr, hist_arbs(i).io.out) // arbiter to xbar input
+  }
+
+  for (i <- 0 until Specs.num_queues) {
+    hist_xbar.io.si(i) <> evt_hist_mgr.io.hist_req(i) // Crossbar to event manager input
+  }
 
   /* Event history is broadcast to cores */
-  def histFilter(id: Int, in: Valid[EventHistoryRsp]): Valid[EventHistoryRsp] = {
-    val out = Wire(Valid(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits)))
-    out.valid := in.valid && in.bits.EP_id === id.U
-    out.bits := in.bits
+  def histFilter(id: Int, in: Seq[Valid[EventHistoryRsp]]): Valid[EventHistoryRsp] = {
+    val matches = in.map(x => x.valid && x.bits.EP_id === id.U)
+    val out: Valid[EventHistoryRsp] = Mux1H(matches, in)
     out
   }
-  for(i <- 0 until Specs.num_cores){cores(i).io.hist_rsp <> histFilter(i, evt_hist_mgr.io.hist_rsp)}
+  // Register the history output
+  val hist_rsp_buffer = evt_hist_mgr.io.hist_rsp.map(Pipe(_, latency = 1))
+  for(i <- 0 until Specs.num_cores){cores(i).io.hist_rsp <> histFilter(i, hist_rsp_buffer)}
 
   /* GVT updates */
   val queue_min_window = RegInit(Vec(Seq.fill(4)(0.U(Specs.time_bits.W))))
@@ -313,13 +333,17 @@ class PDESA extends Module with PlatformParams{
   }
   io.report.total_mem_time := tot_mem
 
-  val rpt_gen_vld = Cat(cores.map(_.io.generated_evt.valid))
-  val q_conf = Count((rpt_gen_vld & (rpt_gen_vld - 1.U)).orR())
+  val rpt_gen_vld: Bool = Cat(gen_arbs.map(a => Cat(a.io.in.map(in => in.valid && !in.ready)))).orR()
+  val q_conf = Count(rpt_gen_vld)
   io.report.total_q_conflict := q_conf
 
-  val rpt_hist_req_vld = Cat(cores.map(_.io.hist_req.valid))
-  val hist_conf = Count((rpt_hist_req_vld & (rpt_hist_req_vld - 1.U)).orR())
+  val rpt_hist_req_vld = Cat(hist_arbs.map(a => Cat(a.io.in.map(in => in.valid && !in.ready)))).orR()
+  val hist_conf = Count(rpt_hist_req_vld)
   io.report.total_hist_conflict := hist_conf
+
+  val rpt_mem_req_vld = Cat(mem_arbs.map(a => Cat(a.io.in.map(in => in.valid && !in.ready)))).orR()
+  val mem_conf = Count(rpt_hist_req_vld)
+  io.report.total_mem_conflict := mem_conf
 
   /* Debug connections */
   def makeDbgIO[T <: Data](in: DecoupledIO[T]) : ValidIO[T] = {
@@ -362,9 +386,17 @@ class ReportBundle extends Bundle{
   val total_antimsg = Output(UInt(64.W))
   val total_q_conflict = Output(UInt(64.W))
   val total_hist_conflict = Output(UInt(64.W))
+  val total_mem_conflict = Output(UInt(64.W))
   val avg_proc_time = Output(UInt(64.W))
   val total_mem_time = Output(UInt(64.W))
   val avg_hist_time = Output(UInt(64.W))
+}
+
+class ConfBundle extends Bundle{
+  val num_mem_access = Input(UInt(64.W))
+
+  val proc_delay = Input(UInt(Specs.time_bits.W))
+  val num_init_events = Input(UInt(64.W))
 }
 
 class Count(inc: Bool){
