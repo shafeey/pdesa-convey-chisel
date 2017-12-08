@@ -22,7 +22,9 @@ trait MemParams{
   val MEM_ADDR_WID = 48
   val MEM_RD_CMD: Int = 1
   val MEM_WR_CMD: Int = 2
-  val MEM_SIZE_BYTE: Int = 0
+  val MEM_RD_DATA: Int = 2
+  val MEM_WR_COMPLETE: Int = 3
+  val MEM_SIZE_BYTE: Int = 3 // 8 byte rd/wr
 }
 
 class ConveyWrapper(accelerator: () => Accelerator) extends Module with PlatformParams{

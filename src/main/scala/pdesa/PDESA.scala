@@ -16,7 +16,7 @@ object Specs {
 
   val hist_size = 16
 
-  val NUM_MEM_BYTE = 1
+  val NUM_MEM_BYTE = 8
 
   def lp_bits = log2Ceil(num_lp)
   def core_bits = log2Ceil(num_cores)

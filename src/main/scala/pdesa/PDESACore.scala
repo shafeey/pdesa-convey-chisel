@@ -200,7 +200,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   def LD_RTN_task = {
-    when(io.memPort.rsp.valid && io.memPort.rsp.bits.rtnCtl === rtnCtl){
+    when(io.memPort.rsp.valid && io.memPort.rsp.bits.cmd === MEM_RD_DATA.U && io.memPort.rsp.bits.rtnCtl === rtnCtl){
       state := sPROC_DELAY
     }
   }
@@ -220,7 +220,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   def ST_RTN_task = {
-    when(io.memPort.rsp.valid && io.memPort.rsp.bits.rtnCtl === rtnCtl){
+    when(io.memPort.rsp.valid && io.memPort.rsp.bits.cmd === MEM_WR_COMPLETE.U && io.memPort.rsp.bits.rtnCtl === rtnCtl){
       state := sFINALISE
     }
   }

@@ -93,7 +93,7 @@ int main(int argc, char *argv[])
   }
 
   // Allocate memory on coprocessor
-  wdm_posix_memalign(m_coproc, (void**)&cp_a0, 64, size*128);
+  wdm_posix_memalign(m_coproc, (void**)&cp_a0, 64, (size+1)*2048);
   printf("Address passed to CAE: %p\n", cp_a0);
     
   num_LP = num_LP-1;
