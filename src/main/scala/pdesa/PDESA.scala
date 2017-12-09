@@ -188,14 +188,29 @@ class PDESA extends Module with PlatformParams{
   }
 
   /* Event history is broadcast to cores */
-  def histFilter(id: Int, in: Seq[Valid[EventHistoryRsp]]): Valid[EventHistoryRsp] = {
-    val matches = in.map(x => x.valid && x.bits.EP_id === id.U)
-    val out: Valid[EventHistoryRsp] = Mux1H(matches, in)
+  def histFilter(id: Int, in: DecoupledIO[EventHistoryRsp]) : Valid[EventHistoryRsp] = {
+    val out = Wire(Valid(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits)))
+    out.valid := in.valid && in.bits.EP_id === id.U
+    out.bits := in.bits
     out
   }
-  // Register the history output
-  val hist_rsp_buffer = evt_hist_mgr.io.hist_rsp.map(Pipe(_, latency = 1))
-  for(i <- 0 until Specs.num_cores){cores(i).io.hist_rsp <> histFilter(i, hist_rsp_buffer)}
+
+  val hist_rsp_xbar =
+    Module(new Crossbar(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits), Specs.num_queues, Specs.num_core_grp))
+  for(i<- 0 until Specs.num_queues){
+    val hist_rsp = Wire(Decoupled(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits)))
+    // Convert ValidIO to DecoupledIO
+    hist_rsp.valid := evt_hist_mgr.io.hist_rsp(i).valid
+    hist_rsp.bits := evt_hist_mgr.io.hist_rsp(i).bits
+    val target = evt_hist_mgr.io.hist_rsp(i).bits.EP_id
+    hist_rsp_xbar.io.insert(i, target, hist_rsp)
+  }
+  for(i<- 0 until Specs.num_core_grp){
+    hist_rsp_xbar.io.si(i).ready := true.B // Convert DecoupledIO to ValidIO
+  }
+  for (i <- 0 until Specs.num_cores) {
+    cores(i).io.hist_rsp := histFilter(i, hist_rsp_xbar.io.si(i / Specs.num_cores_per_grp))
+  }
 
   /* GVT updates */
   val queue_min_window = RegInit(Vec(Seq.fill(4)(0.U(Specs.time_bits.W))))
