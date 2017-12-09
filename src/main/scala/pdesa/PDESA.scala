@@ -198,11 +198,8 @@ class PDESA extends Module with PlatformParams{
   val hist_rsp_xbar =
     Module(new Crossbar(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits), Specs.num_queues, Specs.num_core_grp))
   for(i<- 0 until Specs.num_queues){
-    val hist_rsp = Wire(Decoupled(new EventHistoryRsp(Specs.lp_bits, Specs.time_bits)))
-    // Convert ValidIO to DecoupledIO
-    hist_rsp.valid := evt_hist_mgr.io.hist_rsp(i).valid
-    hist_rsp.bits := evt_hist_mgr.io.hist_rsp(i).bits
-    val target = evt_hist_mgr.io.hist_rsp(i).bits.EP_id
+    val hist_rsp = evt_hist_mgr.io.hist_rsp(i)
+    val target = hist_rsp.bits.get_target_addr
     hist_rsp_xbar.io.insert(i, target, hist_rsp)
   }
   for(i<- 0 until Specs.num_core_grp){

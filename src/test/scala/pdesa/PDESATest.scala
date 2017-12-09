@@ -10,9 +10,9 @@ import scala.util.Random
 
 class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
   val max_cycle = 60000
-  val target_gvt = 2000
+  val target_gvt = 200
   val proc_delay = 10
-  val num_init_events = 10
+  val num_init_events = 64
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {

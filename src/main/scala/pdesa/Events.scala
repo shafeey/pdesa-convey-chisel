@@ -72,4 +72,9 @@ class EventHistoryRsp(lp_bits: Int, time_bits: Int) extends Bundle {
 
   override def cloneType: EventHistoryRsp.this.type =
     new EventHistoryRsp(lp_bits, time_bits).asInstanceOf[this.type]
+
+  def get_target_addr: UInt = {
+    val lower_bits_rev = Reverse(EP_id)(log2Ceil(Specs.num_core_grp)-1, 0)
+    Reverse(lower_bits_rev)
+  }
 }
