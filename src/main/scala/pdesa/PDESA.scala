@@ -5,10 +5,10 @@ import chisel3.util._
 import conveywrapper._
 
 object Specs {
-  val num_cores = 64
-  val num_lp = 256
-  val num_events = 512
-  val time_bits = 16
+  val num_cores = 128
+  val num_lp = 512
+  val num_events = 1024
+  val time_bits = 32
 
   val num_core_grp = 8
   val num_queues = 4
@@ -105,8 +105,9 @@ class PDESA extends Module with PlatformParams{
   for(i<- 0 until Specs.num_queues){
     val issue_evt = Wire(Decoupled(new EventDispatchBundle))
     // Convert ValidIO to DecoupledIO
-    issue_evt.valid := evt_mgr.io.out(i).valid
-    issue_evt.bits := evt_mgr.io.out(i).bits
+//    issue_evt.valid := evt_mgr.io.out(i).valid
+//    issue_evt.bits := evt_mgr.io.out(i).bits
+    issue_evt <> evt_mgr.io.out(i)
     val issue_target = evt_mgr.io.out(i).bits.tag(Specs.core_bits - 1, Specs.core_bits - log2Ceil(Specs.num_core_grp))
     issue_xbar.io.insert(i, issue_target, issue_evt)
   }

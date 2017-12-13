@@ -61,7 +61,7 @@ class EventAckMsg extends Bundle{
 class EventManagerIO(num_ifc: Int) extends Bundle {
   // TODO: Update EventManager Test to reflect change in interface
   val in = Flipped(Vec(num_ifc, Decoupled(new EventDispatchBundle)))
-  val out = Vec(num_ifc, Valid(new EventDispatchBundle))
+  val out = Vec(num_ifc, Decoupled(new EventDispatchBundle))
   val evt_req = Flipped(Vec(num_ifc, Decoupled(UInt(Specs.core_bits.W))))
   val ack = Vec(num_ifc, Valid(new EventAckMsg))
   val queue_min = Valid(UInt(Specs.time_bits.W))
@@ -98,7 +98,7 @@ class EventManager(num_q: Int) extends Module {
       initializer.io.req(i).nodeq()
       io.out(i).valid := false.B
       when(io.evt_req(i).valid || initializer.io.req(i).valid){
-        q.io.out.deq()
+        q.io.out.ready := io.out(i).ready
         when(q.io.out.fire()){
           io.evt_req(i).deq()
           initializer.io.req(i).deq()
