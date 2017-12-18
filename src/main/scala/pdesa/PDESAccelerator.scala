@@ -28,6 +28,7 @@ class PDESAccelerator extends Accelerator with PlatformParams{
   val TOT_HIST_CONF = 13
   val TOT_MEM_CONF = 14
   val TOT_MEM_DELAY = 15
+  val TOT_PROC = 16
 
   val MAX_SIM_TIME = (~0.U(32.W)).asUInt()
   val sim_time_counter = RegInit(0.U(32.W))
@@ -86,6 +87,8 @@ class PDESAccelerator extends Accelerator with PlatformParams{
     io.retPort(TOT_MEM_CONF).bits := pdesa_engine.io.report.total_mem_conflict
     io.retPort(TOT_MEM_DELAY).valid := true.B
     io.retPort(TOT_MEM_DELAY).bits := pdesa_engine.io.report.total_mem_time
+    io.retPort(TOT_PROC).valid := true.B
+    io.retPort(TOT_PROC).bits := pdesa_engine.io.report.total_proc
   }
 
   pdesa_engine.io.start := state === sRUNNING

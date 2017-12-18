@@ -17,7 +17,7 @@ int main(int argc, char *argv[])
   uint64_t  gvt;
   uint64_t  total_cycles;
   uint64_t  total_events;
-  uint64_t  total_stalls;
+  uint64_t  total_stalls, total_proc;
   uint64_t  total_antimsg;
   uint64_t  total_qconf, mem_conf, hist_conf, total_mem_delay;
   
@@ -38,7 +38,7 @@ int main(int argc, char *argv[])
 //  uint64_t core_mask = 0x0000000000000003; // 02 cores
 //  uint64_t core_mask = 0x0000000000000001; // 01 cores
   
-  uint64_t report[64];
+  uint64_t report[128];
   long size = 8;
 
   // check command line args
@@ -114,8 +114,8 @@ int main(int argc, char *argv[])
     ds.ae[i].aeg_ptr_s = args;
     ds.ae[i].aeg_cnt_s = 7;
     ds.ae[i].aeg_base_s = 0;
-    ds.ae[i].aeg_ptr_r = &report[i*16];
-    ds.ae[i].aeg_cnt_r = 9;
+    ds.ae[i].aeg_ptr_r = &report[i*32];
+    ds.ae[i].aeg_cnt_r = 10;
     ds.ae[i].aeg_base_r = 7;
   }
 
@@ -142,6 +142,8 @@ int main(int argc, char *argv[])
   hist_conf = report[6];
   mem_conf = report[7];
   total_mem_delay = report[8];
+  total_proc = report[9];
+
     
   printf("Returned GVT = %lld\n", (long long) gvt);
   printf("Total cycles = %lld\n", (long long) total_cycles);
@@ -152,7 +154,8 @@ int main(int argc, char *argv[])
   printf("Contention for history table = %lld\n", (long long) hist_conf);
   printf("Contention for memory interface = %lld\n", (long long) mem_conf);
   printf("Total memory access time per core = %lld\n", (long long) total_mem_delay);
-  
+  printf("Total proc cycles = %lld\n", (long long) total_proc);
+
   return 0;
 }
 

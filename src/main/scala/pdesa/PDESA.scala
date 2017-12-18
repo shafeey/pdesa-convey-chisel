@@ -314,7 +314,7 @@ class PDESA extends Module with PlatformParams{
   io.report.total_events := tot_event.reduce(_ + _)
 
   val tot_stall = RegInit(0.U(64.W))
-  val stalled_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  val stalled_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(64.W))))
   for(i <- 0 until Specs.num_cores){
     when(state === sRUNNING && cores(i).io.report.stalled){stalled_cycles(i) := stalled_cycles(i) + 1.U}
   }
@@ -323,8 +323,18 @@ class PDESA extends Module with PlatformParams{
   }
   io.report.total_stalls := tot_stall
 
+  val tot_proc = RegInit(0.U(64.W))
+  val proc_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(64.W))))
+  for(i <- 0 until Specs.num_cores){
+    when(state === sRUNNING && cores(i).io.processing){proc_cycles(i) := proc_cycles(i) + 1.U}
+  }
+  when(state === sEND && !rpt_sum_finished){
+    tot_proc := tot_proc + proc_cycles(rpt_core_select(Specs.core_bits-1, 0))
+  }
+  io.report.total_proc := tot_proc
+
   val tot_mem = RegInit(0.U(64.W))
-  val mem_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(Specs.time_bits.W))))
+  val mem_cycles = RegInit(Vec(Seq.fill(Specs.num_cores)(0.U(64.W))))
   for(i <- 0 until Specs.num_cores){
     when(state === sRUNNING && cores(i).io.report.mem){mem_cycles(i) := mem_cycles(i) + 1.U}
   }
@@ -342,7 +352,7 @@ class PDESA extends Module with PlatformParams{
   io.report.total_hist_conflict := hist_conf
 
   val rpt_mem_req_vld = Cat(mem_arbs.map(a => Cat(a.io.in.map(in => in.valid && !in.ready)))).orR()
-  val mem_conf = Count(rpt_hist_req_vld)
+  val mem_conf = Count(rpt_mem_req_vld)
   io.report.total_mem_conflict := mem_conf
 
   /* Debug connections */
@@ -383,6 +393,7 @@ class ReportBundle extends Bundle{
   val total_cycles = Output(UInt(64.W))
   val total_events = Output(UInt(64.W))
   val total_stalls = Output(UInt(64.W))
+  val total_proc = Output(UInt(64.W))
   val total_antimsg = Output(UInt(64.W))
   val total_q_conflict = Output(UInt(64.W))
   val total_hist_conflict = Output(UInt(64.W))

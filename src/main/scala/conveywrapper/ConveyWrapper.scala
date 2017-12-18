@@ -8,7 +8,7 @@ trait PlatformParams extends MemParams{
   val rtnctlWidth: Int = memIDBits
   val maxNumMemPorts: Int = 8
 
-  val numAEGReg: Int = 16
+  val numAEGReg: Int = 17
   val widAEGReg: Int = 64
 }
 
