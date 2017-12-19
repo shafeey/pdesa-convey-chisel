@@ -152,8 +152,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     need_cancellation := false.B
   }
 
+  val rollback_q = Module(new Stack(filt_enq.bits, entries = Specs.hist_size))
+
   hist_queue.nodeq()
   filt_enq.noenq()
+  rollback_q.io.enq.noenq()
   when(hist_queue.valid && filt_enq.ready) {
     when(hist_queue.bits.cancel_evt =/= event_data.cancel_evt &&
       hist_queue.bits.origin_time === event_data.time && !match_found) {
@@ -168,7 +171,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
         need_cancellation := true.B
       }
     }.otherwise {
-      filt_enq.enq(hist_queue.deq())
+      when(hist_queue.bits.origin_time > event_data.time && !hist_queue.bits.cancel_evt) {
+        rollback_q.io.enq.enq(hist_queue.deq())
+      }.otherwise {
+        filt_enq.enq(hist_queue.deq())
+      }
     }
   }
 
