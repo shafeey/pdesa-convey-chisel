@@ -4,6 +4,13 @@ import chisel3._
 import chisel3.util._
 import conveywrapper._
 
+object ModelSpecs{
+  val land_delay = 8
+  val dep_delay = 16
+  val arrival_delay = 32
+}
+
+//noinspection ScalaStyle
 // TODO: Implement logic to account for ack before quitting
 // TODO: Drive last processed timestamp for GVT computation
 class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with PlatformParams{
@@ -51,8 +58,15 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     }
   })
 
+  /* random numbers */
+  val random_number_generator = LFSR(seed = 35179 ^ core_id)
+  val current_rand = RegInit(0.U(random_number_generator.getWidth.W))
+  val rand_lp = current_rand
+  val rand_offset = RegNext(rand_lp)
+  val rand_mem_delay = RegNext(rand_offset)
+
   /* State Machine */
-  val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sNil = Enum(11)
+  val sIDLE :: sSTALL :: sHIST_RD :: sLD_MEM :: sLD_RTN :: sPROC_DELAY :: sROLLBACK :: sGEN_EVT :: sHIST_WR :: sST_MEM :: sST_RTN :: sFINALISE :: sNil = Enum(12)
   val state = RegInit(sIDLE)
   io.processing := (state =/= sIDLE ) && (state =/= sSTALL)
 
@@ -65,6 +79,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   io.req_evt.valid := false.B
   val r_last_processed_ts = RegInit(0.U(Specs.time_bits.W))
   io.last_proc_ts := r_last_processed_ts
+
+  val rollback_not_cancel = Reg(Bool())
+  val state_reversed = Reg(Bool())
 
   def IDLE_task = {
 //    when(!event_requested) {
@@ -86,6 +103,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
       state := sSTALL
       r_last_processed_ts := io.issued_evt.bits.time
 //      event_requested := false.B // Clear flag for next iteration
+      current_rand := random_number_generator
     }
   }
 
@@ -96,6 +114,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     hist_cnt := io.start.bits.hist_size
     gvt := io.gvt
     stalled := false.B
+
+    // Rollback logic
+    rollback_not_cancel := true.B
+    state_reversed := false.B
   }
 
   def STALL_task = {
@@ -128,12 +150,13 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   // TODO: Sizes can be adjusted
   val hist_recv_cnt = RegInit(0.U(log2Ceil(Specs.hist_size).W))
   when(hist_queue_enq.fire) {
-    printf("<++ EP %d # Received history. Count: %d, LP: %d (", core_id.U, hist_recv_cnt + 1.U, event_data.lp_id)
-    when(hist_queue_enq.bits.cancel_evt) {
-      printf("Cancel at time: %d)\n", hist_queue_enq.bits.origin_time)
-    }.otherwise {
-      printf("-->%d, time: %d-->%d)\n", hist_queue_enq.bits.target_lp, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.target_time)
-    }
+    printf("<++ EP %d # Received history. Count: %d, LP: %d (origin time: %d, cancel: %d)\n",
+      core_id.U, hist_recv_cnt + 1.U, event_data.lp_id, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.cancel_evt)
+//    when(hist_queue_enq.bits.cancel_evt) {
+//      printf("Cancel at time: %d)\n", hist_queue_enq.bits.origin_time)
+//    }.otherwise {
+//      printf("-->%d, time: %d-->%d)\n", hist_queue_enq.bits.target_lp, hist_queue_enq.bits.origin_time, hist_queue_enq.bits.target_time)
+//    }
 
     hist_recv_cnt := hist_recv_cnt + 1.U
   }
@@ -153,10 +176,11 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   val rollback_q = Module(new Stack(filt_enq.bits, entries = Specs.hist_size))
+  rollback_q.io.enq.noenq()
+  rollback_q.io.deq.nodeq()
 
   hist_queue.nodeq()
   filt_enq.noenq()
-  rollback_q.io.enq.noenq()
   when(hist_queue.valid && filt_enq.ready) {
     when(hist_queue.bits.cancel_evt =/= event_data.cancel_evt &&
       hist_queue.bits.origin_time === event_data.time && !match_found) {
@@ -169,10 +193,13 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
       match_data := hist_queue.deq() // Save and discard this history entry
       when(event_data.cancel_evt === true.B) {
         need_cancellation := true.B
+        rollback_q.io.enq.enq(hist_queue.deq())
       }
     }.otherwise {
       when(hist_queue.bits.origin_time > event_data.time && !hist_queue.bits.cancel_evt) {
         rollback_q.io.enq.enq(hist_queue.deq())
+        printf("____ Rollback necessary at core %d, lp %d at time %d\n", core_id.U, event_data.lp_id, event_data.time)
+        // TODO: put cancel events to rb queue too, then put them in history in correct order. may get lost otherwise
       }.otherwise {
         filt_enq.enq(hist_queue.deq())
       }
@@ -180,7 +207,6 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   }
 
   // Memory access
-  val rand_mem_delay = LFSR(seed = 35179 ^ core_id)
   val mem_delay_target = RegInit(0.U(10.W))
   val mem_delay_counter = RegInit(0.U(10.W))
   when(state === sIDLE) {
@@ -194,49 +220,47 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   io.memPort.req.noenq()
   io.memPort.req.bits.driveDefaults()
 
+  val lp_state = Reg(new LPState)
+
   val rtnCtl = Cat(event_data.time, event_data.lp_id, core_id.U(Specs.core_bits.W))
   val req_vaddr = io.addr + (event_data.lp_id << log2Ceil(Specs.NUM_MEM_BYTE)).asUInt()
   def MEM_LD_task = {
-    when(!io.conf.num_mem_access.andR()) {
-      val req = Wire(io.memPort.req.bits.cloneType)
-      req.addr := req_vaddr
-      req.cmd := MEM_RD_CMD.U
-      req.rtnCtl := rtnCtl
-      req.size := MEM_SIZE_BYTE.U
+    val req = Wire(io.memPort.req.bits.cloneType)
+    req.addr := req_vaddr
+    req.cmd := MEM_RD_CMD.U
+    req.rtnCtl := rtnCtl
+    req.size := MEM_SIZE_BYTE.U
 
-      io.memPort.req.enq(req)
-      when(io.memPort.req.fire()) {
-        state := sLD_RTN
-      }
-    }.otherwise{
-      // When num_mem_access is set to -1 (0xFFFFFFFFFFFFFFF), we emulate memory access by a delay
-      when(mem_delay_counter === mem_delay_target){
-        state := sPROC_DELAY
-      }
+    io.memPort.req.enq(req)
+    when(io.memPort.req.fire()) {
+      state := sLD_RTN
     }
   }
 
   def LD_RTN_task = {
     when(io.memPort.rsp.valid && io.memPort.rsp.bits.cmd === MEM_RD_DATA.U && io.memPort.rsp.bits.rtnCtl === rtnCtl){
       state := sPROC_DELAY
+      when(event_data.time === 0.U){ // the first event, set initial state
+        lp_state.furthest_landing_slot := 0.U
+        lp_state.waiting_time := 0.U
+        lp_state.num_landed := 0.U
+      }.otherwise {
+        lp_state := io.memPort.rsp.bits.readData.asTypeOf(lp_state.cloneType)
+      }
     }
   }
 
   def MEM_ST_task = {
-    when(!io.conf.num_mem_access.andR()) {
-      val req = Wire(io.memPort.req.bits.cloneType)
-      req.addr := req_vaddr
-      req.cmd := MEM_WR_CMD.U
-      req.rtnCtl := rtnCtl
-      req.size := MEM_SIZE_BYTE.U
-      req.writeData := rtnCtl
+    val req = Wire(io.memPort.req.bits.cloneType)
+    req.addr := req_vaddr
+    req.cmd := MEM_WR_CMD.U
+    req.rtnCtl := rtnCtl
+    req.size := MEM_SIZE_BYTE.U
+    req.writeData := lp_state.asUInt()
 
-      io.memPort.req.enq(req)
-      when(io.memPort.req.fire()) {
-        state := sST_RTN
-      }
-    }.otherwise{
-      state := sFINALISE
+    io.memPort.req.enq(req)
+    when(io.memPort.req.fire()) {
+      state := sST_RTN
     }
   }
 
@@ -256,15 +280,119 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   def PROC_DELAY_task = {
     delay_counter := delay_counter + 1.U
     when(delay_counter === io.conf.proc_delay) {
-      state := sGEN_EVT
+      state := sROLLBACK
+    }
+  }
+
+  val branch_taken = Reg(new EventHistoryBranchPath)
+
+  def ARRIVAL_task = {
+    when(lp_state.furthest_landing_slot < event_data.time){
+      branch_taken.landing_slot_open := true.B
+      lp_state.furthest_landing_slot := event_data.time + ModelSpecs.land_delay.U
+    }.otherwise{
+      branch_taken.landing_slot_open := false.B
+      lp_state.furthest_landing_slot := lp_state.furthest_landing_slot + ModelSpecs.land_delay.U
+      lp_state.waiting_time := lp_state.waiting_time + (lp_state.furthest_landing_slot - event_data.time)
+    }
+  }
+
+  def ARRIVAL_rb_task = {
+    val rb_msg = rollback_q.io.deq.bits
+    when(!rollback_q.io.deq.bits.branch_taken.landing_slot_open){
+      lp_state.waiting_time := lp_state.waiting_time - (rb_msg.rng_seed - rb_msg.origin_time)
+    }
+    lp_state.furthest_landing_slot := rb_msg.rng_seed // this event doesn't use rng, so we use its place for state bkup
+
+    // rollback event to same LP, time based on branch taken, type Landing
+  }
+
+  def LANDING_task = {
+    lp_state.num_landed := lp_state.num_landed + 1.U
+    // Schedule departure
+  }
+
+  def LANDING_rb_task = {
+    lp_state.num_landed := lp_state.num_landed - 1.U
+    // Rollbac event to rnd lp, rnd time based on rng type DEPARTURE
+  }
+
+  def DEPARTURE_task = {
+    // schedule arrival event
+  }
+
+  def DEPARTURE_rb_task = {
+    // rollback event by rng
+  }
+
+  /* Create rollback events and reverse states when some events get processed out of order*/
+  val rb_entries = rollback_q.io.deq
+  val rb_rand_lp = Wire(rb_entries.bits.rng_seed.cloneType)
+  val rb_rand_offset = LFSR.next_state_comb(rb_rand_lp)
+  def ROLLBACK_task = {
+    when(!hist_queue.valid) {
+      when(rb_entries.valid) {
+        when(!state_reversed) {
+          switch(rb_entries.bits.event_type) {
+            is(0.U) { // Arrival
+              ARRIVAL_rb_task
+            }
+            is(1.U) { // Landing
+              LANDING_rb_task
+            } // No state change happens for departure, so it's omitted for now
+          }
+          state_reversed := true.B
+          printf("____ Executing rollback at core %d, lp %d at time %d\n", core_id.U, event_data.lp_id, event_data.time)
+        }
+
+        val rb_event = Wire(evt_out_q.io.enq.bits)
+        val rb_cancel_event = Wire(evt_out_q.io.enq.bits)
+        switch(rb_entries.bits.event_type) {
+          is(0.U) {
+            rb_event.setValue(event_data.lp_id, rb_entries.bits.origin_time, event_type = 0.U, false.B)
+            when(rb_entries.bits.branch_taken.landing_slot_open) {
+              rb_cancel_event.setValue(event_data.lp_id, rb_entries.bits.origin_time + ModelSpecs.land_delay.U, event_type = 1.U, true.B)
+            }.otherwise {
+              rb_cancel_event.setValue(event_data.lp_id, rb_entries.bits.rng_seed + ModelSpecs.land_delay.U, event_type = 1.U, true.B)
+            }
+          }
+          is(1.U) {
+            rb_event.setValue(event_data.lp_id, rb_entries.bits.origin_time, event_type = 1.U, false.B)
+            rb_cancel_event.setValue(event_data.lp_id, rb_entries.bits.origin_time + ModelSpecs.dep_delay.U + rb_rand_offset(3,0), event_type = 2.U, true.B)
+          }
+          is(2.U) {
+            rb_event.setValue(event_data.lp_id, rb_entries.bits.origin_time, event_type = 2.U, false.B)
+            rb_cancel_event.setValue(rb_rand_lp, rb_entries.bits.origin_time + ModelSpecs.arrival_delay.U + rb_rand_offset(4,0), event_type = 0.U, true.B)
+          }
+        }
+
+        when(rollback_not_cancel) {
+          rb_rand_lp := rb_entries.bits.rng_seed
+          /* Rollback event */
+          evt_out_q.io.enq.bits := rb_event
+          evt_out_q.io.enq.valid := true.B
+          when(evt_out_q.io.enq.ready) {
+            rollback_not_cancel := false.B
+            //filt_queue.deq() /* Remove entry only once during rollback+cancel generation */
+          }
+        }.otherwise {
+          /* Cancel event */
+          evt_out_q.io.enq.bits := rb_cancel_event
+          evt_out_q.io.enq.valid := true.B
+          when(evt_out_q.io.enq.ready) {
+            rb_entries.deq()
+            rollback_not_cancel := true.B
+            state_reversed := false.B
+          }
+        }
+      }.otherwise {
+        state := sGEN_EVT
+      }
     }
   }
 
 
   // Event Generation
-  val rand_lp = LFSR(seed = 51843 ^ core_id)
-  val rand_offset = LFSR(seed = 25879 ^ core_id)
-
   val evt_out_q = Module(new Queue(Wire(new EventMsg(lp_bits, time_bits)), Specs.hist_size))
   evt_out_q.io.enq.noenq()
 
@@ -285,41 +413,69 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   when(state === sIDLE){evt_ack_counter := 0.U}
     .elsewhen(io.dispatch_ack.valid){evt_ack_counter := evt_ack_counter + 1.U}
 
+
+//  val did_it_once = RegInit(false.B)
   //  when(state === sGEN_EVT){
   def GEN_task = {
     when(!hist_queue.valid) {
       /* Wait until all history events have been processed */
       when(match_found) {
-        when(need_cancellation) {
-          // Enqueue cancellation msg
-          evt_out_q.io.enq.bits.time := match_data.target_time
-          evt_out_q.io.enq.bits.lp_id := match_data.target_lp
-          evt_out_q.io.enq.bits.cancel_evt := true.B
-          evt_out_q.io.enq.valid := true.B
-          when(evt_out_q.io.enq.fire()) {
-            printf("** EP %d # Cancellation(quash) event at time: %d, LP: %d --> GVT: %d\n", core_id.U, match_data.target_time, match_data.target_lp, gvt)
-            state := sHIST_WR
-          }
-        }.otherwise {
-          printf("** EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
-          state := sHIST_WR
-        }
+        state := sHIST_WR // Rollback was done previously if needed, no more to do
+//        when(need_cancellation) {
+//          // Enqueue cancellation msg
+//          evt_out_q.io.enq.bits.time := match_data.target_time
+//          evt_out_q.io.enq.bits.lp_id := match_data.target_lp
+//          evt_out_q.io.enq.bits.cancel_evt := true.B
+//          evt_out_q.io.enq.valid := true.B
+//          when(evt_out_q.io.enq.fire()) {
+//            printf("** EP %d # Cancellation(quash) event at time: %d, LP: %d --> GVT: %d\n", core_id.U, match_data.target_time, match_data.target_lp, gvt)
+//            state := sHIST_WR
+//          }
+//        }.otherwise {
+//          printf("** EP %d # Event quashed. LP: %d\n", core_id.U, event_data.lp_id)
+//          state := sHIST_WR
+//        }
         /* If cancellation not needed, no new event shall be generated */
       }.otherwise {
         when(!event_data.cancel_evt) {
-          /* Generate a regular new event randomly */
-          val gen_evt_time = event_data.time + rand_offset(5, 0) + 10.U
-          val gen_evt_lp = rand_lp(Specs.lp_bits - 1, 0)
-          val gen_evt_type = false.B
-          evt_out_q.io.enq.bits.time := gen_evt_time
-          evt_out_q.io.enq.bits.lp_id := gen_evt_lp
-          evt_out_q.io.enq.bits.cancel_evt := gen_evt_type
-          evt_out_q.io.enq.valid := true.B
+          val gen_evt = Wire(evt_out_q.io.enq.bits)
+          switch(event_data.event_type){
+            is(0.U){ //Arrival
+              ARRIVAL_task
+              when(lp_state.furthest_landing_slot < event_data.time){
+                gen_evt.setValue(event_data.lp_id, event_data.time + ModelSpecs.land_delay.U, event_type = 1.U, false.B)
+              }.otherwise{
+                gen_evt.setValue(event_data.lp_id, lp_state.furthest_landing_slot + ModelSpecs.land_delay.U, event_type = 1.U, false.B)
+              }
+            }
+            is(1.U){ // Landing
+              LANDING_task
+              gen_evt.setValue(event_data.lp_id, event_data.time + ModelSpecs.dep_delay.U + rand_offset(3,0), event_type = 2.U, false.B)
+            }
+            is(2.U){ // Departure
+              DEPARTURE_task
+              gen_evt.setValue(rand_lp, event_data.time + ModelSpecs.arrival_delay.U + rand_offset(4,0), event_type = 0.U, false.B)
+            }
+          }
+
+//          if(core_id == 0){
+//            when(!did_it_once && event_data.time > 150.U && !event_data.cancel_evt && event_data.event_type === 0.U){
+//              gen_evt.setValue(event_data.lp_id, 50.U, 0.U, false.B)
+//              printf("DUMMY %d\n", event_data.lp_id)
+//            }
+//          }
+
+          evt_out_q.io.enq.enq(gen_evt)
 
           filt_enq.bits.origin_time := event_data.time
-          filt_enq.bits.target_time := gen_evt_time
-          filt_enq.bits.target_lp := gen_evt_lp
-          filt_enq.bits.cancel_evt := gen_evt_type
+          filt_enq.bits.event_type := event_data.event_type
+          when(event_data.event_type === 0.U){
+            filt_enq.bits.rng_seed := lp_state.furthest_landing_slot
+          }.otherwise{
+            filt_enq.bits.rng_seed := current_rand
+          }
+          filt_enq.bits.branch_taken := branch_taken
+          filt_enq.bits.cancel_evt := false.B
           filt_enq.valid := true.B
           //TODO: This may be source of future bug since we're not checking ready for filt_queue
 
@@ -329,7 +485,8 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
           }
         }.otherwise{ // The cancel events will pushed to history where it waits for matching event to arrive
           filt_enq.bits.origin_time := event_data.time
-          filt_enq.bits.target_lp := event_data.lp_id
+//          filt_enq.bits.target_lp := event_data.lp_id
+          filt_enq.bits.event_type := event_data.event_type
           filt_enq.bits.cancel_evt := true.B
           filt_enq.valid := true.B
           printf("** EP %d (LP %d)# Pushed cancel event at time: %d\n", core_id.U, event_data.lp_id, event_data.time)
@@ -345,7 +502,6 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   hist_write_q.io.enq.noenq()
   hist_write_q.io.deq.nodeq()
 
-  val rollback_not_cancel = Reg(Bool())
   val hist_written = Reg(UInt(log2Ceil(Specs.hist_size).W))
   when(state === sIDLE) {
     rollback_not_cancel := false.B
@@ -355,24 +511,7 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
   def HIST_WR_task = {
     when(filt_queue.valid) {
       when(filt_queue.bits.origin_time > event_data.time && !filt_queue.bits.cancel_evt) {
-        when(rollback_not_cancel) {
-          /* Rollback event */
-          evt_out_q.io.enq.bits.setValue(event_data.lp_id, filt_queue.bits.origin_time, false.B)
-          evt_out_q.io.enq.valid := true.B
-          when(evt_out_q.io.enq.ready) {
-            rollback_not_cancel := false.B
-            filt_queue.deq() /* Remove entry only once during rollback+cancel generation */
-//            printf("EP %d # Rollback event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.origin_time, event_data.lp_id)
-          }
-        }.otherwise {
-          /* Cancel event */
-          evt_out_q.io.enq.bits.setValue(filt_queue.bits.target_lp, filt_queue.bits.target_time, true.B)
-          evt_out_q.io.enq.valid := true.B
-          when(evt_out_q.io.enq.ready) {
-            rollback_not_cancel := true.B
-//            printf("EP %d # Cancellation event at time: %d, LP: %d\n", core_id.U, filt_queue.bits.target_time, filt_queue.bits.target_lp)
-          }
-        }
+        filt_queue.deq() /* Remove entry, we already handled rollback in ROLLBACK phase */
       }.otherwise {
         io.hist_req.valid := true.B
         io.hist_req.bits.setWrite(core_id.U, event_data.lp_id, hist_written, filt_queue.bits)
@@ -444,6 +583,9 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
     is(sLD_RTN){
       LD_RTN_task
     }
+    is(sROLLBACK){
+      ROLLBACK_task
+    }
     is(sPROC_DELAY) {
       // Insert predefined delay
       // Go to GEN_EVT when done
@@ -485,4 +627,10 @@ class PDESACore(core_id: Int, lp_bits: Int, time_bits: Int) extends Module with 
 object PDESACore extends App {
   chisel3.Driver.execute(args, () =>
     new PDESACore(core_id = 3, lp_bits = 8, time_bits = 16))
+}
+
+class LPState extends Bundle{
+  val num_landed = UInt(16.W)
+  val waiting_time = UInt(24.W)
+  val furthest_landing_slot = UInt(24.W)
 }

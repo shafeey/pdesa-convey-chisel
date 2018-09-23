@@ -26,7 +26,7 @@ int main(int argc, char *argv[])
   uint64_t  sim_end_time = 1000;
   uint64_t  num_init_events = 512;
   uint64_t num_LP = 64;
-  uint64_t num_mem_access = 0xFFFFFFFFFFFFFFFF;
+  uint64_t num_mem_access = 1;
   uint64_t num_delays = 10;
 
   uint64_t num_cores = 64;
@@ -84,7 +84,7 @@ int main(int argc, char *argv[])
       return -1;
   }
 
-  char *name = "pdk";
+  char *name = "65008.1.1.4.0";
   if (wdm_attach(m_coproc, name)) {
       fprintf(stderr, "Unable to attach signature \"%s\"\n", name);
       fprintf(stderr, " Please verify that the personality is installed in");

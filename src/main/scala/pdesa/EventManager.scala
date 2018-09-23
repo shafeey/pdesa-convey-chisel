@@ -14,7 +14,8 @@ protected class EventDataBundle[D <: EventMsg](data_type: D, LP_id_bits: Int, ti
     new EventDataBundle(data_type, LP_id_bits, time_bits).asInstanceOf[this.type]
 }
 
-protected class QueueController[T <: EventMsg](event_type: EventDataBundle[T], size: Int, order_by: T => UInt) extends Module {
+protected class QueueController[T <: EventMsg](event_type: EventDataBundle[T], size: Int, order_by: T => UInt)
+  extends Module {
   val io = IO(new Bundle {
     val in = Flipped(Decoupled(event_type))
     val out = Decoupled(event_type)
@@ -176,7 +177,7 @@ class InitializationHelper extends Module {
         for (q <- 0 until Specs.num_queues) {
           io.event(q).valid := true.B
           io.event(q).bits.msg.setValue(lp_id = Cat(q.U, evt_cnt(Specs.lp_bits - log2Ceil(Specs.num_queues) -1, 0)),
-            time = 0.U, cancel = false.B)
+            time = 0.U, event_type = 2.U, cancel = false.B)
         }
         when(evt_cnt === num_events) {
           state := sREQ

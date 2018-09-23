@@ -7,26 +7,36 @@ class EventMsg(lp_id_bits: Int, time_bits: Int) extends Bundle {
   val lp_id = UInt(lp_id_bits.W)
   val time = UInt(time_bits.W)
   val cancel_evt = Bool()
+  val event_type = UInt(2.W)
 
   override def cloneType: EventMsg.this.type = new EventMsg(lp_id_bits, time_bits).asInstanceOf[this.type]
 
-  def setValue(lp_id: UInt, time: UInt, cancel: Bool): Unit = {
+  def setValue(lp_id: UInt, time: UInt, event_type: UInt, cancel: Bool): Unit = {
     this.lp_id := lp_id
     this.time := time
+    this.event_type := event_type
     this.cancel_evt := cancel
   }
 }
 
 class EventHistoryMsg(lp_bits: Int, time_bits: Int) extends Bundle {
   val origin_time = UInt(time_bits.W)
-  val target_time = UInt(time_bits.W)
-  val target_lp = UInt(lp_bits.W)
+//  val target_time = UInt(time_bits.W)
+//  val target_lp = UInt(lp_bits.W)
   val cancel_evt = Bool()
+  val rng_seed = UInt(16.W) // LFSR used has 16 bits seed
+  val event_type = UInt(2.W)
+  val branch_taken = new EventHistoryBranchPath
 
-  def hist_wid: Int = time_bits + time_bits + lp_bits + 1
+//  def hist_wid: Int = time_bits + time_bits + lp_bits + 1 + 16 + 2
+  def hist_wid: Int = time_bits + 1 + 16 + 2 + branch_taken.getWidth
 
   override def cloneType: EventHistoryMsg.this.type =
     new EventHistoryMsg(lp_bits, time_bits).asInstanceOf[this.type]
+}
+
+class EventHistoryBranchPath extends Bundle{
+  val landing_slot_open = Bool()
 }
 
 object EventHistroyCmnd {

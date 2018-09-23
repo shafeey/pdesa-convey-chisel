@@ -2,11 +2,14 @@ package pdesa
 
 import chisel3._
 import chisel3.iotesters._
+import chisel3.util.Cat
 
 class PriorityQueueTester extends SteppedHWIOTester {
   val number_of_stages = 5
 
-  val device_under_test = Module(new PriorityQueue(0.U(16.W), 0.U(8.W), number_of_stages))
+  val order_by: UInt => UInt = d => d
+
+  val device_under_test = Module(new PriorityQueue(0.U(16.W), order_by, number_of_stages))
   val c = device_under_test
   enable_all_debug = false
 

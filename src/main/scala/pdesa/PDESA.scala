@@ -5,7 +5,7 @@ import chisel3.util._
 import conveywrapper._
 
 object Specs {
-  val num_cores = 64
+  val num_cores = 16
   val num_lp = 256
   val num_events = 512
   val time_bits = 16

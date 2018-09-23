@@ -12,7 +12,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
   val max_cycle = 60000
   val target_gvt = 2000
   val proc_delay = 10
-  val num_init_events = 10
+  val num_init_events = 32
 
   case class EnqPacket(valid: Boolean, coreid: Int, time: Int, lp: Int, cancel: Int)
   def peekEnq(i: Int) = {
@@ -71,7 +71,7 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
   }
 
   case class MemPacket(valid: Boolean, rtnctl: Int, cmd: Int, addr: BigInt, data: BigInt)
-  case class MemRsp(rtnctl: Int, data: BigInt)
+  case class MemRsp(rtnctl: Int, cmd: Int, data: BigInt)
   val mem_mock = mutable.HashMap.empty[BigInt, BigInt]
   val mem_rsp = Seq.fill(numMemPorts)(mutable.PriorityQueue.empty[(Int, MemRsp)](Ordering.by(x => -x._1)))
   def serveMemRequest(i: Int) = {
@@ -79,11 +79,11 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
       peek(c.io.memPort(i).req.valid) > 0,
       peek(c.io.memPort(i).req.bits.rtnCtl).toInt,
       peek(c.io.memPort(i).req.bits.cmd).toInt,
-      peek(c.io.memPort(i).req.bits.writeData),
+      peek(c.io.memPort(i).req.bits.addr),
       peek(c.io.memPort(i).req.bits.writeData)
     )
     if(m.valid){
-      val rsp: (Int, MemRsp) = (cycle + rnd.nextInt(30) + 80, MemRsp(m.rtnctl, mem_mock.getOrElse(m.addr, BigInt(0))))
+      val rsp: (Int, MemRsp) = (cycle + rnd.nextInt(30) + 80, MemRsp(m.rtnctl, m.cmd, mem_mock.getOrElse(m.addr, BigInt(0))))
       if(m.cmd == MEM_WR_CMD) {
         mem_mock(m.addr) = m.data
       }
@@ -98,6 +98,11 @@ class PDESATester(c: PDESA) extends PeekPokeTester(c) with PlatformParams{
       val rsp = mem_rsp(i).dequeue()._2
       poke(c.io.memPort(i).rsp.valid, 1)
       poke(c.io.memPort(i).rsp.bits.rtnCtl, rsp.rtnctl)
+      if(rsp.cmd == MEM_RD_CMD) {
+        poke(c.io.memPort(i).rsp.bits.cmd, MEM_RD_DATA)
+      }else{
+        poke(c.io.memPort(i).rsp.bits.cmd, MEM_WR_COMPLETE)
+      }
       poke(c.io.memPort(i).rsp.bits.readData, rsp.data)
     } else {
       poke(c.io.memPort(i).rsp.valid, 0)
